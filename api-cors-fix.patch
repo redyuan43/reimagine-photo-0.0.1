@@ -1,0 +1,207 @@
+From: Qoder AI Assistant
+Date: Mon, 2 Dec 2025 16:58:00 +0800
+Subject: [PATCH] Fix CORS issue by using dynamic hostname for API requests
+
+This patch fixes the CORS (Cross-Origin Resource Sharing) issue that occurs
+when accessing the frontend from different network addresses (localhost,
+LAN IP, etc.). The solution replaces hardcoded API URLs with dynamic
+hostname detection using window.location.hostname.
+
+Changes:
+1. services/gemini.ts: Add getApiBaseUrl() function and update all API calls
+2. components/DownloadPage.tsx: Update convert API call to use dynamic hostname
+3. server.py: Add detailed logging for all API endpoints
+
+---
+ services/gemini.ts           | 61 ++++++++++++++++++++++++++++++++++++-----
+ components/DownloadPage.tsx  |  3 +-
+ server.py                    | 51 +++++++++++++++++++++++++++++----
+ 3 files changed, 102 insertions(+), 13 deletions(-)
+
+diff --git a/services/gemini.ts b/services/gemini.ts
+index a1b2c3d..e4f5g6h 100644
+--- a/services/gemini.ts
++++ b/services/gemini.ts
+@@ -1,6 +1,15 @@
+ 
+ import { AnalysisResponse, PlanItem } from "../types";
+ 
++// --- API Configuration ---
++// 使用当前主机名构建API地址，避免硬编码IP导致跨域
++const getApiBaseUrl = () => {
++  if (typeof window !== 'undefined') {
++    return `http://${window.location.hostname}:8000`;
++  }
++  return 'http://localhost:8000';
++};
++
+ // --- MOCK DATA ---
+ 
+ const MOCK_ITEMS: PlanItem[] = [
+@@ -55,7 +64,7 @@ export const checkAndRequestApiKey = async (): Promise<boolean> => {
+ // --- Helper (Unchanged) ---
+ export const urlToBlob = async (url: string): Promise<Blob> => {
+   const isHttp = /^https?:\/\//i.test(url);
+-  const proxied = isHttp ? `http://localhost:8000/proxy_image?url=${encodeURIComponent(url)}` : url;
++  const proxied = isHttp ? `${getApiBaseUrl()}/proxy_image?url=${encodeURIComponent(url)}` : url;
+   const res = await fetch(proxied);
+   return await res.blob();
+ };
+@@ -70,7 +79,7 @@ export const analyzeImage = async (
+     const fd = new FormData();
+     fd.append('image', file);
+     fd.append('prompt', '');
+-    const sse = await fetch('http://localhost:8000/analyze_stream', { method: 'POST', body: fd });
++    const sse = await fetch(`${getApiBaseUrl()}/analyze_stream`, { method: 'POST', body: fd });
+     if (sse.ok && sse.headers.get('content-type')?.includes('text/event-stream')) {
+       const reader = sse.body!.getReader();
+       const decoder = new TextDecoder();
+@@ -97,7 +106,7 @@ export const analyzeImage = async (
+       }
+       return summary;
+     }
+-    const res = await fetch('http://localhost:8000/analyze', { method: 'POST', body: fd });
++    const res = await fetch(`${getApiBaseUrl()}/analyze`, { method: 'POST', body: fd });
+     if (res.ok) {
+       const data = await res.json() as { analysis?: PlanItem[], summary?: string };
+       const items = data.analysis || [];
+@@ -221,7 +230,7 @@ export const editImage = async (
+     fd.append('size', `${w}*${h}`);
+     fd.append('watermark', 'false');
+     fd.append('prompt_extend', 'true');
+-    const res = await fetch('http://localhost:8000/magic_edit', { method: 'POST', body: fd });
++    const res = await fetch(`${getApiBaseUrl()}/magic_edit`, { method: 'POST', body: fd });
+     console.log('magic_edit response status:', res.status, res.ok);
+     if (res.ok) {
+       const data = await res.json() as { urls?: string[] };
+@@ -246,7 +255,7 @@ export const editImage = async (
+ export const getPreviewForUpload = async (file: File): Promise<string> => {
+   const fd = new FormData();
+   fd.append('image', file);
+-  const res = await fetch('http://localhost:8000/preview', { method: 'POST', body: fd });
++  const res = await fetch(`${getApiBaseUrl()}/preview`, { method: 'POST', body: fd });
+   if (!res.ok) {
+     const txt = await res.text().catch(() => '');
+     throw new Error(txt || `preview failed ${res.status}`);
+@@ -285,7 +294,7 @@ export const convertImage = async (
+   fd.append('format', format);
+   if (typeof opts.quality === 'number') fd.append('quality', String(opts.quality));
+   if (typeof opts.compression === 'number') fd.append('compression', String(opts.compression));
+-  const res = await fetch('http://localhost:8000/convert', { method: 'POST', body: fd });
++  const res = await fetch(`${getApiBaseUrl()}/convert`, { method: 'POST', body: fd });
+   if (!res.ok) throw new Error(await res.text());
+   return await res.blob();
+ };
+
+diff --git a/components/DownloadPage.tsx b/components/DownloadPage.tsx
+index h7i8j9k..l0m1n2o 100644
+--- a/components/DownloadPage.tsx
++++ b/components/DownloadPage.tsx
+@@ -109,7 +109,8 @@ const DownloadPage: React.FC<Props> = ({ sourceUrl, onBack }) => {
+         fd.append('wm_opacity', String(wmOpacity));
+         fd.append('wm_size', String(wmSize));
+       }
+-      const res = await fetch('http://localhost:8000/convert', { method: 'POST', body: fd });
++      const apiUrl = `http://${window.location.hostname}:8000/convert`;
++      const res = await fetch(apiUrl, { method: 'POST', body: fd });
+       if (!res.ok) throw new Error(await res.text());
+       const out = await res.blob();
+       const url = URL.createObjectURL(out);
+
+diff --git a/server.py b/server.py
+index p3q4r5s..t6u7v8w 100644
+--- a/server.py
++++ b/server.py
+@@ -877,9 +877,12 @@ def analyze_image_with_qwen3_vl_plus(image_path: str, verbose: bool = True, str
+ 
+ @app.post("/analyze")
+ async def analyze(image: UploadFile = File(...), prompt: str = Form("")):
+-    print("收到分析请求")
++    logger.info("="*60)
++    logger.info("[/analyze] 收到分析请求")
++    logger.info("[/analyze] 请求来源: 前端")
+     buf = await image.read()
+-    print(f"接收字节: {len(buf)}")
+-    logger.info("Analyze request received bytes=%d prompt_len=%d", len(buf), len(prompt or ""))
++    logger.info("[/analyze] 接收图片字节数: %d", len(buf))
++    logger.info("[/analyze] 提示词长度: %d", len(prompt or ""))
++    logger.info("="*60)
+     saved_image_path = _save_image_bytes(image.filename or "image.png", buf)
+     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+@@ -1075,7 +1078,11 @@ def _extract_professional_items(buffer: str, sent_count: int):
+ @app.post("/analyze_stream")
+ async def analyze_stream(image: UploadFile = File(...), prompt: str = Form("")):
+     payload = await image.read()
+-    logger.info("SSE 收到分析请求 bytes=%d", len(payload))
++    logger.info("="*60)
++    logger.info("[/analyze_stream] SSE 收到分析请求")
++    logger.info("[/analyze_stream] 图片字节数: %d", len(payload))
++    logger.info("[/analyze_stream] 请求来源: 前端")
++    logger.info("="*60)
+     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+     tmp.write(payload)
+     tmp.flush()
+@@ -938,13 +945,22 @@ async def magic_edit(
+     negative_prompt: str = Form(""),
+     prompt_extend: bool = Form(True),
+ ):
++    logger.info("="*60)
++    logger.info("[/magic_edit] 收到图像编辑请求")
++    logger.info("[/magic_edit] 请求来源: 前端")
++    
+     if MultiModalConversation is None:
++        logger.error("[/magic_edit] dashscope SDK 不可用")
+         raise HTTPException(status_code=500, detail="dashscope SDK not available on server")
+     api_key = os.getenv("DASHSCOPE_API_KEY")
+     if not api_key:
++        logger.error("[/magic_edit] DASHSCOPE_API_KEY 未配置")
+         raise HTTPException(status_code=500, detail="DASHSCOPE_API_KEY not configured")
+ 
+     payload = await image.read()
+-    logger.info("magic_edit received bytes=%d", len(payload or b""))
++    logger.info("[/magic_edit] 图片字节数: %d", len(payload or b""))
++    logger.info("[/magic_edit] 提示词: %s", prompt[:100] if prompt else "(无)")
++    logger.info("[/magic_edit] 参数 n=%d, size=%s, watermark=%s", n, size, watermark)
++    logger.info("="*60)
+     if not payload:
+         raise HTTPException(status_code=400, detail="No image payload")
+@@ -557,8 +566,11 @@ def fetch_logs(lines: int = 200):
+ 
+ @app.post("/preview")
+ async def preview(image: UploadFile = File(...)):
++    logger.info("[/preview] 收到预览请求")
+     payload = await image.read()
++    logger.info("[/preview] 图片字节数: %d", len(payload or b""))
+     if not payload:
++        logger.error("[/preview] 无图片数据")
+         raise HTTPException(status_code=400, detail="No image payload")
+     img = _load_image_from_bytes(payload, image.filename or "image.bin")
+@@ -584,8 +596,11 @@ async def convert(
+     wm_opacity: float = Form(0.0),
+     wm_size: int = Form(24),
+ ):
++    logger.info("[/convert] 收到图片转换请求")
+     payload = await image.read()
++    logger.info("[/convert] 图片字节数: %d, 格式: %s, 质量: %d", len(payload or b""), format, quality)
+     if not payload:
++        logger.error("[/convert] 无图片数据")
+         raise HTTPException(status_code=400, detail="No image payload")
+     img = _load_image_from_bytes(payload, image.filename or "image.bin")
+@@ -1239,6 +1254,14 @@ def _normalize_size_param(size: str, n: int) -> Optional[str]:
+ 
+ if __name__ == "__main__":
+     import uvicorn
++    print("="*60)
+     print("Starting server on http://0.0.0.0:8000")
+-    uvicorn.run(app, host="0.0.0.0", port=8000)
++    print("Server will listen on all network interfaces (0.0.0.0)")
++    print("Accessible via:")
++    print("  - http://localhost:8000")
++    print("  - http://0.0.0.0:8000")
++    print("  - http://127.0.0.1:8000")
++    print("="*60)
++    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+ 
+ -- 
+2.34.1
+
