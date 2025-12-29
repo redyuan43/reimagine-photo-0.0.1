@@ -136,7 +136,9 @@ export const editImage = async (
   userInstruction: string,
   resolution: '1K' | '2K' | '4K' = '1K',
   filename: string = "image.png",
-  analysisSummary?: string
+  analysisSummary?: string,
+  aspectRatio?: string, // 新增：比例参数
+  stepIndex?: number    // 新增：步骤索引
 ): Promise<string | null> => {
   const sanitizeSummary = (txt?: string): string => {
     const s = (txt || '').trim();
@@ -230,6 +232,12 @@ export const editImage = async (
     fd.append('size', `${w}*${h}`);
     fd.append('watermark', 'false');
     fd.append('prompt_extend', 'true');
+    
+    // 新增：向后端传递分辨率、比例和步骤
+    fd.append('resolution', resolution);
+    if (aspectRatio) fd.append('aspect_ratio', aspectRatio);
+    if (stepIndex !== undefined) fd.append('step', stepIndex.toString());
+
     const res = await fetch(`${getApiBaseUrl()}/magic_edit`, { method: 'POST', body: fd });
     console.log('magic_edit response status:', res.status, res.ok);
     if (res.ok) {

@@ -210,8 +210,10 @@ def _row_to_image(row: sqlite3.Row) -> RecordImageModel:
 
 
 def _save_image_bytes(filename: str, data: bytes) -> str:
-    ext = Path(filename or "image").suffix or ".png"
-    dest_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}{ext}"
+    p = Path(filename or "image.png")
+    ext = p.suffix or ".png"
+    prefix = p.stem
+    dest_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{prefix}_{uuid4().hex[:4]}{ext}"
     dest_path = IMAGES_DIR / dest_name
     with open(dest_path, "wb") as f:
         f.write(data)
@@ -946,6 +948,9 @@ async def magic_edit(
     watermark: bool = Form(False),
     negative_prompt: str = Form(""),
     prompt_extend: bool = Form(True),
+    aspect_ratio: Optional[str] = Form(None),  # 新增：比例参数
+    resolution: Optional[str] = Form(None),    # 新增：分辨率参数
+    step: Optional[int] = Form(None),          # 新增：步骤编号
 ):
     # 优先使用 VISION_API_KEY (Google Gemini OpenAI 兼容模式)
     vision_api_key = os.getenv("VISION_API_KEY")
@@ -1018,10 +1023,23 @@ async def magic_edit(
                             }
                         }
                     ]
-                }]
+                }],
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"]
+                }
             }
+
+            # 如果传入了比例或分辨率，加入到配置中
+            if aspect_ratio or resolution:
+                image_config = {}
+                if aspect_ratio:
+                    image_config["aspectRatio"] = aspect_ratio
+                if resolution:
+                    image_config["imageSize"] = resolution
+                payload_json["generationConfig"]["imageConfig"] = image_config
             
-            logger.info("发送请求到 Google Native API: %s (MIME: %s)", native_url, input_mime)
+            logger.info("发送请求到 Google Native API: %s (MIME: %s, Ratio: %s, Res: %s)", 
+                        native_url, input_mime, aspect_ratio, resolution)
             resp_google = requests.post(native_url, json=payload_json, timeout=90) # 增加超时时间
             
             if resp_google.status_code == 200:
@@ -1057,7 +1075,9 @@ async def magic_edit(
                                 if mime_type and ("jpeg" in mime_type or "jpg" in mime_type):
                                     ext = ".jpg"
                                 
-                                out_filename = f"gen_{uuid4().hex[:8]}{ext}"
+                                # 文件名包含步骤信息
+                                step_str = f"_step{step}" if step is not None else ""
+                                out_filename = f"gen{step_str}{ext}"
                                 out_path = _save_image_bytes(out_filename, out_bytes)
                                 local_paths.append(out_path)
                                 
