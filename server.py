@@ -92,6 +92,16 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "app.db"
 LOG_PATH = DATA_DIR / "server.log"
 
+GEMINI_BASE_PROMPT = (
+    "Restore this image to stunning quality, ultra-high detail, and exceptional clarity. "
+    "Apply advanced restoration techniques to eliminate noise, artifacts, and any imperfections. "
+    "Optimize lighting to appear natural, balanced, and dynamic, enhancing depth and textures without overexposed highlights or excessively dark shadows. "
+    "Colors should be meticulously restored to achieve a vibrant, rich, and harmonious aesthetic, characteristic of leading design magazines. "
+    "Even if the original is black and white or severely faded, intelligently recolor and enhance it to meet this benchmark standard, "
+    "with deep blacks, clean whites, and rich, realistic tones. The final image should appear as though captured with a high-end camera "
+    "and professionally post-processed, possessing maximum depth and realism."
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -993,11 +1003,14 @@ async def magic_edit(
             base_url = image_edit_endpoint.replace("/openai/", "") if image_edit_endpoint else "https://generativelanguage.googleapis.com/v1beta"
             native_url = f"{base_url.rstrip('/')}/models/{model}:generateContent?key={vision_api_key}"
             
+            # 组合基础提示词和用户指令
+            final_prompt = f"[Standard Quality Requirements]\n{GEMINI_BASE_PROMPT}\n\n[User Specific Edit Instruction]\n{prompt}"
+            
             # 构造请求体 (严格遵循 SDK 示例的 contents 结构)
             payload_json = {
                 "contents": [{
                     "parts": [
-                        {"text": prompt},
+                        {"text": final_prompt},
                         {
                             "inline_data": {
                                 "mime_type": input_mime,
