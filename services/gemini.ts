@@ -73,12 +73,13 @@ export const urlToBlob = async (url: string): Promise<Blob> => {
 // Now accepts a callback to stream items one by one
 export const analyzeImage = async (
   file: File,
-  onPartialResult: (item: PlanItem) => void
+  onPartialResult: (item: PlanItem) => void,
+  prompt: string = ''
 ): Promise<string | undefined> => {
   try {
     const fd = new FormData();
     fd.append('image', file);
-    fd.append('prompt', '');
+    fd.append('prompt', prompt);
     const sse = await fetch(`${getApiBaseUrl()}/analyze_stream`, { method: 'POST', body: fd });
     if (sse.ok && sse.headers.get('content-type')?.includes('text/event-stream')) {
       const reader = sse.body!.getReader();

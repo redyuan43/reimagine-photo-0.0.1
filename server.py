@@ -720,7 +720,24 @@ async def upload_record_image(
 
 def _parse_ui_to_plan_items(ui: dict):
     items = []
-    for idx, p in enumerate(ui.get("professional_analysis") or []):
+    prof_analysis = ui.get("professional_analysis") or []
+    
+    # 检测是否包含“方案”或“选项”类的内容，如果是，则可能是一组互斥选项
+    has_options = any(("方案" in (p.get("problem") or "") or "选项" in (p.get("problem") or "")) for p in prof_analysis)
+    
+    for idx, p in enumerate(prof_analysis):
+        # 优先使用 AI 返回的 checked 状态（如果存在）
+        # 否则如果是选项模式，默认只选中第一个
+        ai_checked = p.get("checked")
+        is_option = "方案" in (p.get("problem") or "") or "选项" in (p.get("problem") or "")
+        
+        if ai_checked is not None:
+            checked = bool(ai_checked)
+        elif has_options and is_option:
+            checked = (idx == 0) # 仅第一个方案默认选中
+        else:
+            checked = True
+            
         items.append({
             "id": p.get("id") or str(idx + 1),
             "problem": p.get("problem") or "",
@@ -728,7 +745,7 @@ def _parse_ui_to_plan_items(ui: dict):
             "engine": p.get("engine") or "Analysis",
             "category": p.get("category") or "发现问题",
             "type": "generative" if (p.get("type") == "generative") else "adjustment",
-            "checked": True,
+            "checked": checked,
         })
 
     fr = ui.get("filter_recommendations") or {}
@@ -794,8 +811,8 @@ def _extract_professional_items(buffer: str, sent_count: int):
         i += 1
     return items
 
-def analyze_image_with_qwen3_vl_plus(image_path: str, verbose: bool = True, stream_output: bool = True, enable_thinking: bool = False):
-    prompt_text = get_enhanced_prompt()
+def analyze_image_with_qwen3_vl_plus(image_path: str, user_prompt: str = "", verbose: bool = True, stream_output: bool = True, enable_thinking: bool = False):
+    prompt_text = get_enhanced_prompt(user_prompt)
     with open(image_path, 'rb') as image_file:
         base64_image = base64.b64encode(image_file.read()).decode('utf-8')
 
@@ -898,7 +915,7 @@ async def analyze(image: UploadFile = File(...), prompt: str = Form("")):
     tmp.flush()
     tmp.close()
 
-    result = analyze_image_with_qwen3_vl_plus(tmp.name, stream_output=True, enable_thinking=True)
+    result = analyze_image_with_qwen3_vl_plus(tmp.name, user_prompt=prompt, stream_output=True, enable_thinking=True)
     thinking_text = _extract_thinking(result if isinstance(result, dict) else None)
     raw_json = _safe_json_dump(result) if isinstance(result, (dict, list)) else None
     ui = result.get("ui_analysis") if isinstance(result, dict) else None
@@ -1256,7 +1273,7 @@ async def analyze_stream(image: UploadFile = File(...), prompt: str = Form("")):
                 with open(tmp.name, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode("utf-8")
                 data_url = f"data:image/jpeg;base64,{b64}"
-                messages = [{"role":"user","content":[{"type":"image_url","image_url":{"url":data_url}},{"type":"text","text":get_enhanced_prompt()}]}]
+                messages = [{"role":"user","content":[{"type":"image_url","image_url":{"url":data_url}},{"type":"text","text":get_enhanced_prompt(prompt)}]}]
                 resp = client.chat.completions.create(model="qwen3-vl-plus", messages=messages, stream=True, temperature=0.1, top_p=0.1, extra_body={"enable_thinking": False, "thinking_budget": 81920})
                 logger.info("SSE 连接建立，开始流式分析")
                 for chunk in resp:
@@ -1290,7 +1307,7 @@ async def analyze_stream(image: UploadFile = File(...), prompt: str = Form("")):
                 logger.warning("SSE 流式调用失败: %s", e)
                 # 回退到非流式分析，确保总结与遗漏项可用
                 try:
-                    fallback_result = analyze_image_with_qwen3_vl_plus(tmp.name, stream_output=False, enable_thinking=True)
+                    fallback_result = analyze_image_with_qwen3_vl_plus(tmp.name, user_prompt=prompt, stream_output=False, enable_thinking=True)
                     logger.info("SSE 回退分析完成")
                 except Exception as e2:
                     logger.warning("SSE 回退调用失败: %s", e2)

@@ -126,9 +126,40 @@ ENHANCED_PROMPT = """
 """
 
 
-def get_enhanced_prompt():
-    """返回增强版提示词"""
-    return ENHANCED_PROMPT.strip()
+def get_enhanced_prompt(user_prompt: str = ""):
+    """返回增强版提示词，如果用户提供了特定的 prompt (通常是问题)，则进行针对性调整"""
+    base_prompt = ENHANCED_PROMPT.strip()
+    
+    if not user_prompt:
+        return base_prompt
+        
+    # 判断是否为问题 (简单启发式)
+    is_question = any(q in user_prompt for q in ["?", "？", "怎么", "如何", "哪", "什么", "吗", "为何", "建议"])
+    
+    if is_question:
+        question_instruction = f"""
+### 用户问题意识模式 (Question-Aware Mode) ###
+用户提出了一个问题："{user_prompt}"
+
+请根据该问题和图像内容，在 `ui_analysis` 中进行以下调整：
+1. **针对性回答**: 在 `summary_ui` 中首先直接回答用户的问题，然后再进行常规总结。
+2. **多重方案列举**: 在 `professional_analysis` 中，请提供 3-4 个**不同的可选方案**供用户选择。
+   - 每个方案的 `id` 必须唯一。
+   - 每个方案的 `problem` 字段应作为该方案的简短名称（例如：“方案 A：复古电影感”）。
+   - 每个方案的 `solution` 字段应详细描述该方案的具体修改内容。
+   - 每个方案的 `priority` 设为 "high"。
+   - 每个方案的 `type` 设为 "generative"。
+   - **关键设置**: 第一个方案的 `checked` 设为 `true`，其余方案的 `checked` 设为 `false`。
+   - 确保这些方案直接响应用户的问题，并提供多样化的视觉选择。
+3. **生成提示词**: `gen_prompt` 部分请根据你认为最可能被选中的方案（或综合最优方案）来编写。
+
+请务必保持输出格式为严格的 JSON。
+"""
+        return question_instruction + "\n" + base_prompt
+    else:
+        # 如果是肯定的描述，将其作为额外的需求加入
+        instruction = f"\n\n### 用户特定需求 ###\n用户输入了以下描述：\"{user_prompt}\"。请在分析和提示词生成中将其作为核心目标执行。"
+        return base_prompt + instruction
 
 def sanitize_summary_ui(text: str) -> str:
     pat = re.compile(r"(建议)")

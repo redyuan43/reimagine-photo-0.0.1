@@ -195,7 +195,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                   return [...prev, newItem];
               });
           }
-      });
+      }, initialPrompt || '');
       if (isMounted && s) {
         setSummaryText(s);
       }
