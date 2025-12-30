@@ -729,7 +729,12 @@ def _parse_ui_to_plan_items(ui: dict):
         # 优先使用 AI 返回的 checked 状态（如果存在）
         # 否则如果是选项模式，默认只选中第一个
         ai_checked = p.get("checked")
-        is_option = "方案" in (p.get("problem") or "") or "选项" in (p.get("problem") or "")
+        problem_text = p.get("problem") or ""
+        is_option = "方案" in problem_text or "选项" in problem_text
+        
+        category = p.get("category") or "发现问题"
+        if is_option:
+            category = "可选方案"
         
         if ai_checked is not None:
             checked = bool(ai_checked)
@@ -740,12 +745,13 @@ def _parse_ui_to_plan_items(ui: dict):
             
         items.append({
             "id": p.get("id") or str(idx + 1),
-            "problem": p.get("problem") or "",
+            "problem": problem_text,
             "solution": p.get("solution") or "",
             "engine": p.get("engine") or "Analysis",
-            "category": p.get("category") or "发现问题",
+            "category": category,
             "type": "generative" if (p.get("type") == "generative") else "adjustment",
             "checked": checked,
+            "isOption": is_option,
         })
 
     fr = ui.get("filter_recommendations") or {}

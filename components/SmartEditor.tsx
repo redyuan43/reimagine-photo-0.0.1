@@ -306,11 +306,28 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
   // --- Action Handlers ---
 
   const toggleItem = (id: string) => {
-    setPlanItems((prev) =>
-      prev.map((item) =>
+    setPlanItems((prev) => {
+      const itemToToggle = prev.find((item) => item.id === id);
+      if (!itemToToggle) return prev;
+
+      // 如果是互斥方案 (isOption)
+      if (itemToToggle.isOption) {
+        return prev.map((item) => {
+          if (item.id === id) {
+            return { ...item, checked: true }; // 方案类点击总是选中
+          }
+          if (item.isOption) {
+            return { ...item, checked: false }; // 其他方案取消选中
+          }
+          return item;
+        });
+      }
+
+      // 常规修图建议 (Checkbox 逻辑)
+      return prev.map((item) =>
         item.id === id ? { ...item, checked: !item.checked } : item
-      )
-    );
+      );
+    });
   };
 
   const handleFilterSelect = (itemId: string, option: string) => {
@@ -576,7 +593,8 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
             )}
             {status === 'ready' && (
                 <>
-                <AdjustmentsHorizontalIcon className="w-4 h-4" /> {dict.confirm}
+                <AdjustmentsHorizontalIcon className="w-4 h-4" /> 
+                {planItems.some(it => it.isOption && it.checked) ? '请选择一个方案' : dict.confirm}
                 </>
             )}
             {status === 'executing' && (
@@ -754,29 +772,33 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                     >
                       {/* Header Section */}
                       <div className="px-4 py-3 flex items-center gap-2.5 border-b border-white/5 bg-white/[0.02]">
-                          {item.isCustom ? (
+                          {item.isCustom || item.isOption ? (
                               <SparklesIcon className={`w-4 h-4 ${isDone ? 'text-amber-400' : 'text-purple-400'}`} />
                           ) : (
                               <ExclamationTriangleIcon className={`w-4 h-4 ${isDone ? 'text-amber-400' : 'text-amber-400'}`} />
                           )}
-                          <span className={`text-xs font-bold tracking-wider uppercase ${isDone ? 'text-amber-400' : (item.isCustom ? 'text-purple-400' : 'text-amber-400')}`}>
+                          <span className={`text-xs font-bold tracking-wider uppercase ${isDone ? 'text-amber-400' : (item.isCustom || item.isOption ? 'text-purple-400' : 'text-amber-400')}`}>
                               {item.isCustom ? dict.userRequest : (item.category || dict.issue)}
                           </span>
                       </div>
 
                       {/* Body Section */}
                       <div className="p-4">
-                          {/* Problem Description */}
-                          <p className={`text-sm text-gray-300 leading-relaxed font-light ${expandedMap[item.id] ? '' : 'line-clamp-2'} mb-2`}>
-                              {item.problem}
-                          </p>
-                          {(item.problem && item.problem.length > 28) && (
-                            <button
-                              className="text-xs text-gray-400 hover:text-white underline"
-                              onClick={() => toggleExpand(item.id)}
-                            >
-                              {expandedMap[item.id] ? '收起' : '展开更多'}
-                            </button>
+                          {/* Problem Description - 方案类条目隐藏此部分，因为标题已包含方案名 */}
+                          {!item.isOption && (
+                            <>
+                              <p className={`text-sm text-gray-300 leading-relaxed font-light ${expandedMap[item.id] ? '' : 'line-clamp-2'} mb-2`}>
+                                  {item.problem}
+                              </p>
+                              {(item.problem && item.problem.length > 28) && (
+                                <button
+                                  className="text-xs text-gray-400 hover:text-white underline"
+                                  onClick={() => toggleExpand(item.id)}
+                                >
+                                  {expandedMap[item.id] ? '收起' : '展开更多'}
+                                </button>
+                              )}
+                            </>
                           )}
 
                           {/* Solution Action Button */}
@@ -795,7 +817,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                                 }
                             `}
                           >
-                            {/* Checkbox */}
+                            {/* Checkbox / Radio */}
                             <div
                               className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-all
                                     ${
@@ -810,12 +832,23 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                               {isProcessingThis ? (
                                 <BlinkingSmileIcon className="w-3 h-3 text-purple-500" />
                               ) : (
-                                (isDone || item.checked) && <CheckIcon className="w-3 h-3" />
+                                (isDone || item.checked) ? (
+                                    item.isOption ? (
+                                        <div className="w-2 h-2 bg-white rounded-full" />
+                                    ) : (
+                                        <CheckIcon className="w-3 h-3" />
+                                    )
+                                ) : null
                               )}
                             </div>
 
                             {/* Solution Text */}
                             <div className="flex-1">
+                              {item.isOption && (
+                                <p className={`text-xs font-bold mb-1 ${item.checked ? 'text-purple-400' : 'text-gray-500'}`}>
+                                  {item.problem}
+                                </p>
+                              )}
                               <p className={`text-sm font-medium transition-colors ${item.checked ? 'text-white' : 'text-gray-400'}`}>
                                 {item.solution}
                               </p>

@@ -11,6 +11,7 @@ export interface PlanItem {
   selectedOption?: string;
   options?: string[];
   priority?: 'high' | 'medium' | 'low';
+  isOption?: boolean;
 }
 
 export interface AnalysisResponse {
