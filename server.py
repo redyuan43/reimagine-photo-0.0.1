@@ -144,6 +144,61 @@ class RecordListResponse(BaseModel):
     items: List[RecordModel]
 
 
+class SmartQuestionModel(BaseModel):
+    id: str
+    text: str
+    choices: Optional[List[str]] = None
+
+
+class SmartSessionStartResponse(BaseModel):
+    session_id: int
+    record_id: Optional[int] = None
+    status: str
+    spec: dict
+    facts: Optional[dict] = None
+    questions: List[SmartQuestionModel] = []
+    template_selected: Optional[str] = None
+    template_candidates: Optional[list] = None
+    prompt_preview: Optional[str] = None
+    image_model: Optional[str] = None
+    plan_items: Optional[List[dict]] = None
+
+
+class SmartSessionAnswerResponse(BaseModel):
+    session_id: int
+    status: str
+    spec: dict
+    facts: Optional[dict] = None
+    questions: List[SmartQuestionModel] = []
+    template_selected: Optional[str] = None
+    template_candidates: Optional[list] = None
+    prompt_preview: Optional[str] = None
+    image_model: Optional[str] = None
+    plan_items: Optional[List[dict]] = None
+
+
+class SmartSessionGenerateResponse(BaseModel):
+    session_id: int
+    status: str
+    prompt: str
+    image_model: str
+    image_config: dict
+    urls: List[str]
+    record_id: Optional[int] = None
+
+
+class SmartSessionAnswerRequest(BaseModel):
+    session_id: int
+    message: Optional[str] = None
+    answers: Optional[dict] = None
+
+
+class SmartSessionGenerateRequest(BaseModel):
+    session_id: int
+    resolution: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+
+
 def _get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -179,6 +234,34 @@ def _init_db() -> None:
                 record_id INTEGER NOT NULL,
                 kind TEXT NOT NULL,
                 image_path TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS smart_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                image_path TEXT NOT NULL,
+                original_name TEXT,
+                spec_json TEXT NOT NULL,
+                facts_json TEXT,
+                template_selected TEXT,
+                template_candidates_json TEXT,
+                status TEXT NOT NULL,
+                record_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS smart_session_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             """
@@ -480,6 +563,137 @@ def _list_records(limit: int = 50, offset: int = 0) -> RecordListResponse:
     return RecordListResponse(total=total, items=items)
 
 
+def _now_iso() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def _json_dumps(obj: object) -> str:
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def _json_loads(s: Optional[str], default: object):
+    if not isinstance(s, str) or not s.strip():
+        return default
+    try:
+        return json.loads(s)
+    except Exception:
+        return default
+
+
+def _insert_smart_session(image_path: str, original_name: Optional[str], spec: dict, facts: Optional[dict], status: str, record_id: Optional[int] = None) -> int:
+    created_at = _now_iso()
+    updated_at = created_at
+    with _get_conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO smart_sessions (image_path, original_name, spec_json, facts_json, template_selected, template_candidates_json, status, record_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                image_path,
+                original_name,
+                _json_dumps(spec or {}),
+                _json_dumps(facts or {}) if facts else None,
+                None,
+                None,
+                status,
+                record_id,
+                created_at,
+                updated_at,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def _update_smart_session(session_id: int, spec: Optional[dict] = None, facts: Optional[dict] = None, template_selected: Optional[str] = None, template_candidates: Optional[list] = None, status: Optional[str] = None, record_id: Optional[int] = None) -> None:
+    fields = []
+    vals = []
+    if spec is not None:
+        fields.append("spec_json = ?")
+        vals.append(_json_dumps(spec or {}))
+    if facts is not None:
+        fields.append("facts_json = ?")
+        vals.append(_json_dumps(facts or {}))
+    if template_selected is not None:
+        fields.append("template_selected = ?")
+        vals.append(template_selected)
+    if template_candidates is not None:
+        fields.append("template_candidates_json = ?")
+        vals.append(_json_dumps(template_candidates or []))
+    if status is not None:
+        fields.append("status = ?")
+        vals.append(status)
+    if record_id is not None:
+        fields.append("record_id = ?")
+        vals.append(record_id)
+    fields.append("updated_at = ?")
+    vals.append(_now_iso())
+    vals.append(session_id)
+    with _get_conn() as conn:
+        conn.execute(f"UPDATE smart_sessions SET {', '.join(fields)} WHERE id = ?", tuple(vals))
+        conn.commit()
+
+
+def _get_smart_session(session_id: int) -> Optional[dict]:
+    with _get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, image_path, original_name, spec_json, facts_json, template_selected, template_candidates_json, status, record_id, created_at, updated_at
+            FROM smart_sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "image_path": row["image_path"],
+        "original_name": row["original_name"],
+        "spec": _json_loads(row["spec_json"], {}),
+        "facts": _json_loads(row["facts_json"], None),
+        "template_selected": row["template_selected"],
+        "template_candidates": _json_loads(row["template_candidates_json"], []),
+        "status": row["status"],
+        "record_id": row["record_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _add_smart_session_message(session_id: int, role: str, content: str) -> None:
+    created_at = _now_iso()
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO smart_session_messages (session_id, role, content, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, role, content, created_at),
+        )
+        conn.commit()
+
+
+def _list_smart_session_messages(session_id: int, limit: int = 50) -> List[dict]:
+    limit = max(1, min(int(limit or 50), 200))
+    with _get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, role, content, created_at
+            FROM smart_session_messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+    return [
+        {"id": int(r["id"]), "session_id": int(r["session_id"]), "role": r["role"], "content": r["content"], "created_at": r["created_at"]}
+        for r in rows
+    ]
+
+
 def _read_log_tail(lines: int = 200) -> List[str]:
     if not LOG_PATH.exists():
         return []
@@ -718,7 +932,77 @@ async def upload_record_image(
     return record_image
 
 
-def _parse_ui_to_plan_items(ui: dict):
+def _spec_to_plan_items(spec: dict, facts: dict) -> List[dict]:
+    items = []
+    
+    # 1. 基础画质优化建议
+    quality = facts.get("quality", {})
+    if quality.get("light_issue"):
+        items.append({
+            "id": "item_light",
+            "problem": quality["light_issue"],
+            "solution": "应用智能补光与对比度增强",
+            "category": "画质增强",
+            "checked": True
+        })
+    if quality.get("color_issue"):
+        items.append({
+            "id": "item_color",
+            "problem": quality["color_issue"],
+            "solution": "执行全局色彩平衡与饱和度映射",
+            "category": "色彩优化",
+            "checked": True
+        })
+    if quality.get("sharpness_issue"):
+        items.append({
+            "id": "item_sharp",
+            "problem": quality["sharpness_issue"],
+            "solution": "进行超分辨率锐化与纹理细节恢复",
+            "category": "细节修复",
+            "checked": True
+        })
+        
+    # 2. 意图规格建议
+    style = (spec.get("style") or {}).get("preset")
+    if style:
+        items.append({
+            "id": "item_style",
+            "problem": f"用户偏好{style}风格",
+            "solution": f"迁移{style}风格权重与氛围渲染",
+            "category": "风格转换",
+            "checked": True
+        })
+        
+    edits = (spec.get("edits") or {}).get("instruction")
+    if edits:
+        items.append({
+            "id": "item_edit",
+            "problem": "用户特定编辑需求",
+            "solution": edits,
+            "category": "按需编辑",
+            "checked": True
+        })
+
+    # 3. 模板特定的建议
+    task_type = spec.get("task_type")
+    if task_type == "text_design":
+        items.append({
+            "id": "item_text",
+            "problem": "包含排版文字需求",
+            "solution": "应用智能文本布局与字体设计",
+            "category": "排版设计",
+            "checked": True
+        })
+    elif task_type == "sticker_icon":
+        items.append({
+            "id": "item_sticker",
+            "problem": "贴纸/图标需求",
+            "solution": "执行主体抠图与透明背景转换",
+            "category": "素材制作",
+            "checked": True
+        })
+
+    return items
     items = []
     prof_analysis = ui.get("professional_analysis") or []
     
@@ -962,6 +1246,804 @@ def _encode_image_to_data_url(file_path: str) -> str:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     return f"data:{mime_type};base64,{b64}"
 
+
+_ASPECT_RATIOS = [
+    ("1:1", 1.0),
+    ("4:3", 4 / 3),
+    ("3:4", 3 / 4),
+    ("16:9", 16 / 9),
+    ("9:16", 9 / 16),
+    ("5:4", 5 / 4),
+    ("4:5", 4 / 5),
+    ("3:2", 3 / 2),
+    ("2:3", 2 / 3),
+    ("21:9", 21 / 9),
+]
+
+
+def _best_aspect_ratio(w: int, h: int) -> str:
+    try:
+        w = int(w or 1)
+        h = int(h or 1)
+        r = w / max(1, h)
+        best = min(_ASPECT_RATIOS, key=lambda x: abs(x[1] - r))
+        return best[0]
+    except Exception:
+        return "1:1"
+
+
+def _extract_image_facts_from_ui(ui: Optional[dict]) -> dict:
+    if not isinstance(ui, dict):
+        return {}
+    basic = ui.get("photo_basic_info") or {}
+    q = ui.get("photo_quality_analysis") or {}
+    try:
+        face_count = basic.get("face_count")
+        if isinstance(face_count, str) and face_count.strip().isdigit():
+            face_count = int(face_count.strip())
+        elif isinstance(face_count, (int, float)):
+            face_count = int(face_count)
+        else:
+            face_count = None
+    except Exception:
+        face_count = None
+    return {
+        "photo_type": basic.get("photo_type"),
+        "scene_type": basic.get("scene_type"),
+        "main_subject": basic.get("main_subject"),
+        "face_count": face_count,
+        "quality": {
+            "light_issue": q.get("light_issue"),
+            "color_issue": q.get("color_issue"),
+            "sharpness_issue": q.get("sharpness_issue"),
+            "composition_issue": q.get("composition_issue"),
+            "background_issue": q.get("background_issue"),
+            "local_defects": q.get("local_defects"),
+        },
+    }
+
+
+def _analyze_image_facts_best_effort(image_path: str, user_prompt: str = "") -> dict:
+    facts: dict = {}
+    try:
+        from PIL import Image as _Image
+        img = _Image.open(image_path)
+        w, h = img.size
+        facts.update(
+            {
+                "width": int(w),
+                "height": int(h),
+                "orientation": "landscape" if w >= h else "portrait",
+                "aspect_ratio": _best_aspect_ratio(w, h),
+            }
+        )
+    except Exception:
+        pass
+    try:
+        if os.getenv("DASHSCOPE_API_KEY"):
+            result = analyze_image_with_qwen3_vl_plus(image_path, user_prompt=user_prompt or "", stream_output=False, enable_thinking=False)
+            if isinstance(result, dict):
+                ui = result.get("ui_analysis")
+                ui_facts = _extract_image_facts_from_ui(ui if isinstance(ui, dict) else None)
+                facts.update(ui_facts)
+                facts["analysis_summary"] = sanitize_summary_ui((ui or {}).get("summary_ui") if isinstance(ui, dict) else "")
+    except Exception as exc:
+        logger.info("smart_session analyze fallback: %s", exc)
+    return facts
+
+
+def _deep_merge(dst: dict, patch: dict) -> dict:
+    if not isinstance(dst, dict):
+        dst = {}
+    if not isinstance(patch, dict):
+        return dst
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            dst[k] = _deep_merge(dst.get(k) or {}, v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def _default_spec(facts: Optional[dict], user_text: str) -> dict:
+    t = (user_text or "").lower()
+    face_count = (facts or {}).get("face_count")
+    subject = None
+    if isinstance(face_count, int) and face_count > 0:
+        subject = "portrait" if face_count == 1 else "group"
+    # 从文本识别任务类型
+    if any(x in t for x in ["logo", "海报", "宣传", "封面", "标题", "排版", "字体", "文字"]):
+        task_type = "text_design"
+    elif any(x in t for x in ["贴纸", "sticker", "icon", "图标", "透明背景", "transparent"]):
+        task_type = "sticker_icon"
+    elif any(x in t for x in ["电商", "主图", "白底", "棚拍", "product"]):
+        task_type = "product_shot"
+    elif any(x in t for x in ["风景", "天空", "山", "海", "landscape"]):
+        task_type = "landscape_enhance"
+    # 如果文本没有明确意图，则从 facts 识别
+    elif facts:
+        photo_type = str(facts.get("photo_type") or "").lower()
+        scene_type = str(facts.get("scene_type") or "").lower()
+        main_subject = str(facts.get("main_subject") or "").lower()
+        
+        if any(x in photo_type or x in scene_type or x in main_subject for x in ["风景", "自然", "风光", "山水", "户外", "landscape", "nature", "scenery", "mountain", "sea", "sky"]):
+            task_type = "landscape_enhance"
+        elif any(x in photo_type or x in main_subject for x in ["人像", "人物", "portrait", "person", "human", "face"]):
+            task_type = "photoreal_portrait"
+        elif any(x in photo_type or x in main_subject for x in ["商品", "电商", "product", "item", "object"]):
+            task_type = "product_shot"
+        else:
+            task_type = "photo_retouch"
+    else:
+        task_type = "photo_retouch"
+    spec = {
+        "task_type": task_type,
+        "subject": subject,
+        "faithfulness": "faithful" if task_type in {"photo_retouch", "landscape_enhance", "product_shot"} else "creative",
+        "must_keep": {
+            "identity": True if subject in {"portrait", "group"} else None,
+            "composition": True,
+            "text_content": True if task_type == "text_design" else None,
+        },
+        "style": {
+            "preset": None,
+        },
+        "text_overlay": {
+            "content": None,
+            "font_style": None,
+            "layout": None,
+            "language": None,
+        },
+        "output": {
+            "aspect_ratio": (facts or {}).get("aspect_ratio"),
+            "resolution": None,
+            "negative_space": None,
+            "background": None,
+        },
+        "edits": {
+            "instruction": (user_text or "").strip() or None,
+        },
+    }
+    return spec
+
+
+def _route_templates(spec: dict, facts: Optional[dict]) -> tuple[str, list]:
+    spec = spec or {}
+    facts = facts or {}
+    task_type = spec.get("task_type")
+    text_content = (spec.get("text_overlay") or {}).get("content")
+    out = spec.get("output") or {}
+    bg = out.get("background")
+    neg = out.get("negative_space")
+    subject = spec.get("subject") or facts.get("main_subject")
+    
+    # 额外从 facts 中提取关键特征
+    photo_type = facts.get("photo_type", "")
+    scene_type = facts.get("scene_type", "")
+    
+    candidates = []
+
+    def add(name: str, score: float, reason: str):
+        candidates.append({"template": name, "score": float(score), "reason": reason})
+
+    # 1. 文字设计模板
+    if task_type == "text_design" or (isinstance(text_content, str) and text_content.strip()):
+        add("text_design", 0.95, "包含文字/排版需求")
+    
+    # 2. 贴纸/图标模板
+    if task_type == "sticker_icon" or (isinstance(bg, str) and "transparent" in bg.lower()):
+        add("sticker_icon", 0.9, "贴纸/图标或透明背景")
+        
+    # 3. 电商/产品模板
+    if task_type == "product_shot" or "商品" in photo_type or "电商" in photo_type:
+        add("product_shot", 0.88, "电商/产品拍摄场景")
+        
+    # 4. 留白构图模板
+    if task_type == "negative_space" or neg:
+        add("negative_space", 0.86, "明确的留白构图需求")
+        
+    # 5. 风景增强模板
+    is_landscape = (
+        task_type == "landscape_enhance" or 
+        subject in {"landscape", "nature", "scenery", "mountain", "sea", "ocean", "forest"} or 
+        any(k in str(photo_type).lower() for k in ["风景", "自然", "风光", "山水", "户外", "landscape", "nature", "scenery"]) or
+        any(k in str(scene_type).lower() for k in ["公园", "山", "海", "天空", "建筑", "城市", "park", "mountain", "sea", "sky", "building", "city", "outdoor"])
+    )
+    if is_landscape:
+        add("landscape_enhance", 0.92, "风景、建筑或自然风光")
+        
+    # 6. 写实人像模板
+    face_count = facts.get("face_count", 0)
+    is_portrait = subject in {"portrait", "group"} or face_count > 0 or "人像" in photo_type or "人物" in photo_type
+    if is_portrait:
+        add("photoreal_portrait", 0.88, "检测到人物主体")
+
+    # 默认兜底
+    add("photo_retouch", 0.6, "通用修图优化")
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    selected = candidates[0]["template"] if candidates else "photo_retouch"
+    return selected, candidates
+
+
+def _compile_prompt(spec: dict, facts: Optional[dict], template_selected: str) -> tuple[str, dict]:
+    spec = spec or {}
+    facts = facts or {}
+    out = spec.get("output") or {}
+    image_config = {}
+    if out.get("aspect_ratio"):
+        image_config["aspectRatio"] = out.get("aspect_ratio")
+    if out.get("resolution"):
+        image_config["imageSize"] = out.get("resolution")
+
+    must_keep = spec.get("must_keep") or {}
+    edits = spec.get("edits") or {}
+    style = spec.get("style") or {}
+    text_overlay = spec.get("text_overlay") or {}
+
+    lines: list[str] = []
+
+    if template_selected == "text_design":
+        lines.append("[Task]\nDesign a clean, professional visual with accurate text rendering.")
+    elif template_selected == "sticker_icon":
+        lines.append("[Task]\nCreate a clean sticker/icon style rendition based on the provided image.")
+    elif template_selected == "product_shot":
+        lines.append("[Task]\nCreate a high-end, studio product photograph based on the provided image.")
+    elif template_selected == "negative_space":
+        lines.append("[Task]\nCreate a minimalist composition with intentional negative space.")
+    elif template_selected == "landscape_enhance":
+        lines.append("[Task]\nEnhance this landscape photo naturally and realistically.")
+    elif template_selected == "photoreal_portrait":
+        lines.append("[Task]\nPhotorealistic portrait retouching with natural results.")
+    else:
+        lines.append("[Task]\nFaithful photo restoration and enhancement.")
+
+    keep_lines = []
+    if must_keep.get("identity") is True:
+        keep_lines.append("Preserve the subject's identity and facial features exactly. Do not change face shape, eyes, nose, mouth, or skin structure.")
+    if must_keep.get("composition") is True:
+        keep_lines.append("Preserve the original composition, camera viewpoint, framing, and geometry.")
+    if must_keep.get("text_content") is True:
+        keep_lines.append("Do not alter existing text content unless explicitly instructed.")
+    if keep_lines:
+        lines.append("[Must Keep]\n" + "\n".join(keep_lines))
+
+    delta_lines = []
+    user_instruction = edits.get("instruction")
+    if isinstance(user_instruction, str) and user_instruction.strip():
+        delta_lines.append(user_instruction.strip())
+    if template_selected in {"photo_retouch", "photoreal_portrait", "product_shot", "landscape_enhance"}:
+        delta_lines.extend(
+            [
+                "Remove noise, compression artifacts, and imperfections.",
+                "Fix exposure and white balance to look natural.",
+                "Recover detail without oversharpening; keep realistic texture.",
+            ]
+        )
+    if template_selected == "product_shot":
+        delta_lines.append("Use a clean background suitable for ecommerce, with realistic soft shadows.")
+    if template_selected == "negative_space":
+        neg = out.get("negative_space")
+        if isinstance(neg, str) and neg.strip():
+            delta_lines.append(f"Place the main subject to create negative space at: {neg.strip()}.")
+        else:
+            delta_lines.append("Place the main subject to create generous negative space for overlay text.")
+    if template_selected == "sticker_icon":
+        bg = out.get("background") or "white"
+        delta_lines.append(f"Sticker style with bold, clean outlines and simple cel-shading. Background must be {bg}.")
+    if template_selected == "text_design":
+        content = text_overlay.get("content")
+        if isinstance(content, str) and content.strip():
+            delta_lines.append(f'Render the exact text: "{content.strip()}".')
+        font_style = text_overlay.get("font_style")
+        if isinstance(font_style, str) and font_style.strip():
+            delta_lines.append(f"Font style: {font_style.strip()}.")
+        layout = text_overlay.get("layout")
+        if isinstance(layout, str) and layout.strip():
+            delta_lines.append(f"Layout: {layout.strip()}.")
+    if delta_lines:
+        lines.append("[Edit]\n" + "\n".join(delta_lines))
+
+    style_lines = []
+    preset = style.get("preset")
+    if isinstance(preset, str) and preset.strip():
+        style_lines.append(f"Overall style: {preset.strip()}.")
+    if template_selected == "photoreal_portrait":
+        style_lines.append("Use portrait photography aesthetics: natural skin texture, gentle contrast, soft background separation.")
+    if template_selected == "product_shot":
+        style_lines.append("Lighting: three-point softbox setup. Camera angle: slightly elevated 45-degree. Ultra-realistic.")
+    if template_selected == "landscape_enhance":
+        style_lines.append("Enhance depth and atmosphere subtly; keep colors natural and believable.")
+    if style_lines:
+        lines.append("[Style]\n" + "\n".join(style_lines))
+
+    avoid_lines = [
+        "No hallucinated details or extra objects unless requested.",
+        "No plastic skin, no oversharpening halos, no excessive HDR.",
+        "No random or misspelled text artifacts.",
+        "Avoid unnatural saturation or color shifts.",
+    ]
+    lines.append("[Avoid]\n" + "\n".join(avoid_lines))
+
+    prompt = "\n\n".join(lines).strip()
+    return prompt, image_config
+
+
+def _get_gemini_api_key() -> Optional[str]:
+    return os.getenv("VISION_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+def _gemini_generate_content(model: str, contents: object, generation_config: Optional[dict] = None, tools: Optional[list] = None, timeout: int = 90) -> dict:
+    api_key = _get_gemini_api_key()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing VISION_API_KEY/GEMINI_API_KEY for Gemini calls")
+    base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+    url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+    payload: dict = {"contents": contents} if isinstance(contents, list) else {"contents": [{"parts": [{"text": str(contents)}]}]}
+    if generation_config:
+        payload["generationConfig"] = generation_config
+    if tools:
+        payload["tools"] = tools
+    resp = requests.post(url, json=payload, timeout=timeout)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Gemini error: {resp.text}")
+    return resp.json()
+
+
+def _extract_text_from_gemini(result: dict) -> str:
+    try:
+        cands = result.get("candidates") or []
+        if not cands:
+            return ""
+        parts = (cands[0].get("content") or {}).get("parts") or []
+        texts = []
+        for p in parts:
+            t = p.get("text")
+            if isinstance(t, str) and t.strip():
+                texts.append(t)
+        return "\n".join(texts).strip()
+    except Exception:
+        return ""
+
+
+def _llm_clarify_next(spec: dict, facts: Optional[dict], messages: List[dict], template_candidates: list) -> tuple[dict, list, Optional[str]]:
+    model = os.getenv("SMART_LLM_MODEL", "gemini-2.0-flash")
+    prompt_obj = {
+        "facts": facts or {},
+        "spec": spec or {},
+        "templates_available": [
+            {"id": "text_design", "desc": "包含文字、排版、海报设计需求"},
+            {"id": "sticker_icon", "desc": "贴纸、图标、Logo，通常需要透明背景"},
+            {"id": "product_shot", "desc": "电商产品图、商业摄影、白底图"},
+            {"id": "landscape_enhance", "desc": "风景照美化、滤镜、细节增强"},
+            {"id": "photoreal_portrait", "desc": "写实人像、写真、证件照美化"},
+            {"id": "photo_retouch", "desc": "通用修图、消除笔、老照片修复"}
+        ],
+        "conversation": messages[-20:],
+    }
+    instruction = (
+        "你是一个图片编辑意图澄清助手。你的目标是：\n"
+        "1) 深入分析用户需求，更新 spec（意图规格）。\n"
+        "2) 引导式对话：如果用户意图模糊，或者你可以通过询问获得更好的生成效果，请务必提出 1-2 个针对性的问题。\n"
+        "   - **特别注意**：如果 conversation 为空（用户只点了分析没说话），你必须基于图片事实主动发起第一次对话，询问用户想要达到的效果，并给出 2-3 个基于图片的具体建议选项。\n"
+        "3) 精准路由：从 templates_available 中选择最匹配的一个。即使当前信息不完全，只要图片内容明确（如风景、人像、产品），就应优先选择对应的专业模板，而不是 photo_retouch。\n\n"
+        "JSON 输出要求（严禁 Markdown）：\n"
+        "{\n"
+        '  \"spec_patch\": { \"task_type\": \"...\", \"subject\": \"...\", \"style\": {\"preset\": \"...\"}, ... },\n'
+        '  \"questions\": [{\"id\":\"q1\",\"text\":\"针对性的提问\",\"choices\":[\"选项A\",\"选项B\"]}],\n'
+        '  \"template_selected\": \"最匹配的模板ID\" \n'
+        "}\n"
+        "注意：\n"
+        "- 优先路由：如果 facts 显示是风景，template_selected 必须是 landscape_enhance；如果是人，必须是 photoreal_portrait。\n"
+        "- 提问策略：不要问废话。如果用户没说话，你的问题应该是：'我看到这是一张[图片描述]，您是想[针对性方案A]还是[针对性方案B]？'\n"
+        "  - 例如风景照：'这张风景照的光影很美，您是想增强日落氛围，还是让天空更通透？'\n"
+        "- spec_patch 尽量详细，利用 facts 中的信息填充细节。\n"
+    )
+    full_prompt = instruction + "\n\n" + json.dumps(prompt_obj, ensure_ascii=False)
+    result = _gemini_generate_content(
+        model=model,
+        contents=[{"parts": [{"text": full_prompt}]}],
+        generation_config={"temperature": 0.2, "maxOutputTokens": 600},
+        timeout=90,
+    )
+    text = _extract_text_from_gemini(result)
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+    if cleaned.endswith("```"):
+        cleaned = cleaned.rsplit("```", 1)[0]
+    obj = _json_loads(cleaned, {})
+    patch = obj.get("spec_patch") if isinstance(obj, dict) else {}
+    questions = obj.get("questions") if isinstance(obj, dict) else []
+    template_selected = obj.get("template_selected") if isinstance(obj, dict) else None
+    if not isinstance(patch, dict):
+        patch = {}
+    if not isinstance(questions, list):
+        questions = []
+    normalized_questions = []
+    for i, q in enumerate(questions[:2]):
+        if not isinstance(q, dict):
+            continue
+        qid = q.get("id") or f"q{i+1}"
+        qtext = q.get("text") or q.get("question") or ""
+        choices = q.get("choices") or q.get("options")
+        if not isinstance(choices, list):
+            choices = None
+        if isinstance(qtext, str) and qtext.strip():
+            normalized_questions.append({"id": str(qid), "text": qtext.strip(), "choices": choices})
+    return patch, normalized_questions, template_selected if isinstance(template_selected, str) and template_selected.strip() else None
+
+
+def _is_ready_to_render(spec: dict, template_selected: str) -> bool:
+    spec = spec or {}
+    if template_selected == "text_design":
+        content = ((spec.get("text_overlay") or {}).get("content") or "")
+        return bool(isinstance(content, str) and content.strip())
+    if template_selected == "sticker_icon":
+        bg = ((spec.get("output") or {}).get("background") or "")
+        return bool(isinstance(bg, str) and bg.strip())
+    if template_selected == "negative_space":
+        neg = (spec.get("output") or {}).get("negative_space")
+        return bool(neg)
+    return True
+
+
+@app.post("/smart/start", response_model=SmartSessionStartResponse)
+async def smart_start(image: UploadFile = File(...), message: str = Form("")):
+    payload = await image.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="No image payload")
+    saved_image_path = _save_image_bytes(image.filename or "image.png", payload)
+
+    record_id: Optional[int] = None
+    try:
+        rec = _insert_record(
+            prompt=(message or "").strip(),
+            thinking=None,
+            image_path=saved_image_path,
+            logs=None,
+            original_name=image.filename,
+            raw_response=None,
+        )
+        record_id = rec.id
+        try:
+            _insert_record_image(record_id=rec.id, kind="input", image_path=saved_image_path)
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("smart_start create record failed: %s", exc)
+
+    facts = _analyze_image_facts_best_effort(saved_image_path, user_prompt=message or "")
+    spec = _default_spec(facts, message or "")
+
+    selected, candidates = _route_templates(spec, facts)
+    messages = []
+    if isinstance(message, str) and message.strip():
+        messages.append({"role": "user", "content": message.strip()})
+
+    patch = {}
+    questions = []
+    llm_selected = None
+    if _get_gemini_api_key():
+        try:
+            patch, questions, llm_selected = _llm_clarify_next(spec, facts, messages, candidates)
+        except Exception as exc:
+            logger.warning("smart_start llm_clarify failed: %s", exc)
+
+    spec = _deep_merge(spec, patch or {})
+    selected, candidates = _route_templates(spec, facts)
+    if llm_selected and any(c.get("template") == llm_selected for c in candidates if isinstance(c, dict)):
+        selected = llm_selected
+
+    if not questions:
+        if selected == "text_design" and not ((spec.get("text_overlay") or {}).get("content") or ""):
+            questions = [{"id": "q_text", "text": "需要渲染的文字内容是什么？请逐字给出。", "choices": None}]
+        if selected == "sticker_icon" and not ((spec.get("output") or {}).get("background") or ""):
+            questions = [{"id": "q_bg", "text": "贴纸背景要透明还是白色？", "choices": ["transparent", "white"]}]
+        if selected == "negative_space" and not ((spec.get("output") or {}).get("negative_space") or ""):
+            questions = [{"id": "q_space", "text": "需要留白的位置是哪里？例如：top-left / top-right / bottom-left / bottom-right / center。", "choices": ["top-left", "top-right", "bottom-left", "bottom-right", "center"]}]
+        face_count = facts.get("face_count")
+        if isinstance(face_count, int) and face_count > 0 and (spec.get("must_keep") or {}).get("identity") is None:
+            questions = (questions or [])[:1] + [{"id": "q_id", "text": "人物面部/身份是否必须完全不变？", "choices": ["必须不变", "允许略微调整"]}]
+
+    status = "ready" if (not questions and _is_ready_to_render(spec, selected)) else "needs_input"
+
+    session_id = _insert_smart_session(saved_image_path, image.filename, spec, facts, status=status, record_id=record_id)
+    try:
+        if isinstance(message, str) and message.strip():
+            _add_smart_session_message(session_id, "user", message.strip())
+    except Exception:
+        pass
+    _update_smart_session(session_id, template_selected=selected, template_candidates=candidates, status=status)
+
+    prompt_preview = None
+    if status == "ready":
+        try:
+            prompt_preview, _ = _compile_prompt(spec, facts, selected)
+        except Exception:
+            prompt_preview = None
+
+    log_path = _write_json_log(
+        "smart_start",
+        saved_image_path,
+        [],
+        params={
+            "session_id": session_id,
+            "template_selected": selected,
+            "template_candidates": candidates,
+            "spec": spec,
+            "facts": facts,
+            "questions": questions,
+            "llm_model": os.getenv("SMART_LLM_MODEL", "gemini-2.5-flash"),
+        },
+        steps=[],
+        summary="",
+        events=[{"level": "INFO", "message": "smart_start created", "value": {"status": status}}],
+        local_output_paths=[],
+        record_id=record_id,
+    )
+    if record_id:
+        try:
+            _update_record_logs(record_id, log_path)
+        except Exception:
+            pass
+
+    return SmartSessionStartResponse(
+        session_id=session_id,
+        record_id=record_id,
+        status=status,
+        spec=spec,
+        facts=facts,
+        questions=[SmartQuestionModel(**q) for q in questions],
+        template_selected=selected,
+        template_candidates=candidates,
+        prompt_preview=prompt_preview,
+        image_model=os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview"),
+        plan_items=_spec_to_plan_items(spec, facts),
+    )
+
+
+@app.post("/smart/answer", response_model=SmartSessionAnswerResponse)
+async def smart_answer(req: SmartSessionAnswerRequest):
+    sess = _get_smart_session(int(req.session_id))
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if req.answers:
+        # If answers are provided as a dict, format them as a message for history
+        # We only take the new ones or all? For now let's just use the message if provided, 
+        # or construct one from answers.
+        message = "\n".join([f"Q: {k}, A: {v}" for k, v in req.answers.items()])
+    else:
+        message = (req.message or "").strip()
+        
+    if not message:
+        raise HTTPException(status_code=400, detail="empty message or answers")
+
+    spec = sess.get("spec") or {}
+    facts = sess.get("facts") or {}
+    selected = sess.get("template_selected") or "photo_retouch"
+    candidates = sess.get("template_candidates") or []
+    _add_smart_session_message(sess["id"], "user", message)
+
+    history = _list_smart_session_messages(sess["id"], limit=50)
+    msgs = [{"role": m["role"], "content": m["content"]} for m in history]
+
+    patch = {}
+    questions = []
+    llm_selected = None
+    if _get_gemini_api_key():
+        try:
+            patch, questions, llm_selected = _llm_clarify_next(spec, facts, msgs, candidates)
+        except Exception as exc:
+            logger.warning("smart_answer llm_clarify failed: %s", exc)
+
+    spec = _deep_merge(spec, patch or {})
+    selected, candidates = _route_templates(spec, facts)
+    if llm_selected and any(c.get("template") == llm_selected for c in candidates if isinstance(c, dict)):
+        selected = llm_selected
+
+    if not questions:
+        if selected == "text_design" and not ((spec.get("text_overlay") or {}).get("content") or ""):
+            questions = [{"id": "q_text", "text": "需要渲染的文字内容是什么？请逐字给出。", "choices": None}]
+        if selected == "sticker_icon" and not ((spec.get("output") or {}).get("background") or ""):
+            questions = [{"id": "q_bg", "text": "贴纸背景要透明还是白色？", "choices": ["transparent", "white"]}]
+        if selected == "negative_space" and not ((spec.get("output") or {}).get("negative_space") or ""):
+            questions = [{"id": "q_space", "text": "需要留白的位置是哪里？例如：top-left / top-right / bottom-left / bottom-right / center。", "choices": ["top-left", "top-right", "bottom-left", "bottom-right", "center"]}]
+
+    status = "ready" if (not questions and _is_ready_to_render(spec, selected)) else "needs_input"
+    _update_smart_session(sess["id"], spec=spec, facts=facts, template_selected=selected, template_candidates=candidates, status=status)
+
+    prompt_preview = None
+    if status == "ready":
+        try:
+            prompt_preview, _ = _compile_prompt(spec, facts, selected)
+        except Exception:
+            prompt_preview = None
+
+    _write_json_log(
+        "smart_answer",
+        sess["image_path"],
+        [],
+        params={
+            "session_id": sess["id"],
+            "template_selected": selected,
+            "template_candidates": candidates,
+            "spec_patch": patch,
+            "spec": spec,
+            "facts": facts,
+            "questions": questions,
+            "llm_model": os.getenv("SMART_LLM_MODEL", "gemini-2.5-flash"),
+        },
+        steps=[],
+        summary="",
+        events=[{"level": "INFO", "message": "smart_answer processed", "value": {"status": status}}],
+        local_output_paths=[],
+        record_id=sess.get("record_id"),
+    )
+
+    return SmartSessionAnswerResponse(
+        session_id=sess["id"],
+        status=status,
+        spec=spec,
+        facts=facts,
+        questions=[SmartQuestionModel(**q) for q in questions],
+        template_selected=selected,
+        template_candidates=candidates,
+        prompt_preview=prompt_preview,
+        image_model=os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview"),
+        plan_items=_spec_to_plan_items(spec, facts),
+    )
+
+
+def _infer_mime_from_filename(filename: str) -> str:
+    ext = (Path(filename or "").suffix or "").lower()
+    if ext in [".jpg", ".jpeg"]:
+        return "image/jpeg"
+    return "image/png"
+
+
+def _gemini_image_edit_native(model: str, prompt_text: str, image_bytes: bytes, mime_type: str, aspect_ratio: Optional[str], resolution: Optional[str], timeout: int = 120) -> tuple[list[str], list[str], dict]:
+    api_key = _get_gemini_api_key()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing VISION_API_KEY/GEMINI_API_KEY for Gemini calls")
+    base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+    url = f"{base_url}/models/{model}:generateContent?key={api_key}"
+    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    payload_json: dict = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt_text},
+                    {"inline_data": {"mime_type": mime_type, "data": img_b64}},
+                ]
+            }
+        ],
+        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+    }
+    if aspect_ratio or resolution:
+        image_config = {}
+        if aspect_ratio:
+            image_config["aspectRatio"] = aspect_ratio
+        if resolution:
+            image_config["imageSize"] = resolution
+        payload_json["generationConfig"]["imageConfig"] = image_config
+    resp = requests.post(url, json=payload_json, timeout=timeout)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"Gemini image error: {resp.text}")
+    result = resp.json()
+    urls = []
+    local_paths = []
+    try:
+        candidates = result.get("candidates") or []
+        for cand in candidates:
+            parts = (cand.get("content") or {}).get("parts") or []
+            for part in parts:
+                img_part = part.get("inline_data") or part.get("inlineData")
+                if not img_part:
+                    continue
+                b64_out = img_part.get("data")
+                if not b64_out:
+                    continue
+                out_bytes = base64.b64decode(b64_out)
+                mime_out = img_part.get("mime_type") or img_part.get("mimeType") or "image/png"
+                ext = ".png"
+                if isinstance(mime_out, str) and ("jpeg" in mime_out or "jpg" in mime_out):
+                    ext = ".jpg"
+                out_path = _save_image_bytes(f"smart{ext}", out_bytes)
+                local_paths.append(out_path)
+                base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
+                urls.append(f"{base}/static/{Path(out_path).name}")
+    except Exception as exc:
+        logger.warning("smart_generate parse response failed: %s", exc)
+    if not urls:
+        if isinstance(result, dict) and result.get("promptFeedback", {}).get("blockReason"):
+            raise HTTPException(status_code=400, detail=f"prompt blocked: {result['promptFeedback']['blockReason']}")
+        raise HTTPException(status_code=400, detail="Gemini did not return any images")
+    return urls, local_paths, result
+
+
+@app.post("/smart/generate", response_model=SmartSessionGenerateResponse)
+async def smart_generate(req: SmartSessionGenerateRequest):
+    sess = _get_smart_session(int(req.session_id))
+    if not sess:
+        raise HTTPException(status_code=404, detail="session not found")
+    spec = sess.get("spec") or {}
+    facts = sess.get("facts") or {}
+    selected = sess.get("template_selected") or "photo_retouch"
+    if sess.get("status") != "ready":
+        selected, _cands = _route_templates(spec, facts)
+        if not _is_ready_to_render(spec, selected):
+            raise HTTPException(status_code=400, detail="session not ready; answer pending questions")
+
+    if isinstance(req.resolution, str) and req.resolution.strip():
+        spec = _deep_merge(spec, {"output": {"resolution": req.resolution.strip()}})
+    if isinstance(req.aspect_ratio, str) and req.aspect_ratio.strip():
+        spec = _deep_merge(spec, {"output": {"aspect_ratio": req.aspect_ratio.strip()}})
+
+    prompt_text, image_config = _compile_prompt(spec, facts, selected)
+    image_model = os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview")
+    try:
+        with open(sess["image_path"], "rb") as f:
+            image_bytes = f.read()
+    except Exception:
+        raise HTTPException(status_code=500, detail="failed to read session image")
+    mime_type = _infer_mime_from_filename(sess.get("original_name") or sess["image_path"])
+
+    urls, local_paths, raw = _gemini_image_edit_native(
+        model=image_model,
+        prompt_text=prompt_text,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        aspect_ratio=image_config.get("aspectRatio"),
+        resolution=image_config.get("imageSize"),
+    )
+
+    record_id = sess.get("record_id")
+    if record_id:
+        try:
+            for p in local_paths:
+                _insert_record_image(record_id=record_id, kind="final", image_path=p)
+        except Exception:
+            pass
+
+    log_path = _write_json_log(
+        "smart_generate",
+        sess["image_path"],
+        urls,
+        params={
+            "session_id": sess["id"],
+            "template_selected": selected,
+            "spec": spec,
+            "facts": facts,
+            "prompt": prompt_text,
+            "image_model": image_model,
+            "image_config": image_config,
+        },
+        steps=[],
+        summary="",
+        events=[{"level": "INFO", "message": "smart_generate completed", "value": {"outputs": len(urls)}}],
+        local_output_paths=local_paths,
+        record_id=record_id,
+    )
+    if record_id:
+        try:
+            _update_record_logs(record_id, log_path)
+        except Exception:
+            pass
+
+    _update_smart_session(sess["id"], spec=spec, template_selected=selected, status="generated")
+
+    return SmartSessionGenerateResponse(
+        session_id=sess["id"],
+        status="generated",
+        prompt=prompt_text,
+        image_model=image_model,
+        image_config=image_config,
+        urls=urls,
+        record_id=record_id,
+    )
+
 @app.post("/magic_edit")
 async def magic_edit(
     image: UploadFile = File(...),
@@ -978,7 +2060,7 @@ async def magic_edit(
     # 优先使用 VISION_API_KEY (Google Gemini OpenAI 兼容模式)
     vision_api_key = os.getenv("VISION_API_KEY")
     image_edit_endpoint = os.getenv("IMAGE_EDIT_ENDPOINT")
-    model = os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-preview")
+    model = os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview")
 
     if not vision_api_key:
         # 退回到 DashScope

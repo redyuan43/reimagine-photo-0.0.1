@@ -21,7 +21,7 @@ import {
 import { ImageComparator } from './ImageComparator';
 import { CanvasMaskEditor } from './CanvasMaskEditor';
 import { DNALoader, BlinkingSmileIcon } from './DNALoader';
-import { analyzeImage, editImage, urlToBlob } from '../services/gemini';
+import { analyzeImage, editImage, urlToBlob, startSmartSession, answerSmartQuestion, generateSmartImage, SmartQuestion, SmartSession } from '../services/gemini';
 import { PlanItem } from '../types';
 
 const MagicWandIcon = SparklesIcon;
@@ -55,6 +55,12 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
 }) => {
   const [status, setStatus] = useState<'analyzing' | 'ready' | 'executing' | 'completed'>('analyzing');
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [smartQuestions, setSmartQuestions] = useState<SmartQuestion[]>([]);
+  const [smartAnswers, setSmartAnswers] = useState<Record<string, string>>({});
+  const [smartSpec, setSmartSpec] = useState<any>(null);
+  const [smartTemplate, setSmartTemplate] = useState<string | null>(null);
+  const [isSmartFlow, setIsSmartFlow] = useState(false);
   const [userInput, setUserInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [exportFormat, setExportFormat] = useState<'jpeg'|'png'|'webp'|'tiff'>('jpeg');
@@ -153,6 +159,20 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
   }), []);
   const dict = t[lang];
 
+  const getTemplateName = (id: string | null) => {
+    if (!id) return '通用优化';
+    const map: Record<string, string> = {
+      'text_design': '文字/排版设计',
+      'sticker_icon': '贴纸/图标生成',
+      'product_shot': '电商/产品摄影',
+      'landscape_enhance': '风景/自然增强',
+      'photoreal_portrait': '写实人像写真',
+      'negative_space': '极简/留白构图',
+      'photo_retouch': '通用修图优化'
+    };
+    return map[id] || id;
+  };
+
   // Initial Load & Analysis (Streaming)
   useEffect(() => {
     if (initialStatusOverride) return;
@@ -166,46 +186,56 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           setHistoryIndex(0);
       }
       
-      // Inject initial prompt immediately if exists
-      if (initialPrompt && initialPrompt.trim() !== '') {
-         const promptItem: PlanItem = {
-            id: `custom_init`,
-            problem: dict.userRequest,
-            solution: initialPrompt,
-            engine: 'Smart Engine',
-            type: 'generative',
-            checked: true,
-            isCustom: true
-         };
-         setPlanItems([promptItem]);
-      } else {
-         setPlanItems([]);
-      }
       if (startMode === 'direct') {
         if (isMounted) setStatus('ready');
         await executeMagic(undefined, initialPrompt || '');
         return;
       }
 
-      // Start Streaming Analysis
-      const s = await analyzeImage(imageFile, (newItem) => {
-          if (isMounted) {
-              setPlanItems(prev => {
-                  if (prev.find(p => p.id === newItem.id)) return prev;
-                  return [...prev, newItem];
-              });
+      try {
+        if (isMounted) setStatus('analyzing');
+        
+        // Use Smart Session for initial analysis
+        const session = await startSmartSession(imageFile, initialPrompt || '');
+        if (isMounted) {
+          setSessionId(session.session_id);
+          setIsSmartFlow(true);
+          setSmartSpec(session.spec);
+          if ((session as any).template_selected) {
+            setSmartTemplate((session as any).template_selected);
           }
-      }, initialPrompt || '');
-      if (isMounted && s) {
-        setSummaryText(s);
-      }
-      
-      if (isMounted) {
-        setStatus('ready');
+          
+          if (session.plan_items && session.plan_items.length > 0) {
+            setPlanItems(session.plan_items);
+          }
+          
+          if (session.questions && session.questions.length > 0) {
+            setSmartQuestions(session.questions);
+            setStatus('ready');
+          } else {
+            setStatus('ready');
+          }
+        }
+      } catch (e) {
+        console.warn('Smart flow failed, falling back to old analysis.', e);
+        // Fallback to old streaming analysis
+        const s = await analyzeImage(imageFile, (newItem) => {
+          if (isMounted) {
+            setPlanItems(prev => {
+              if (prev.find(p => p.id === newItem.id)) return prev;
+              return [...prev, newItem];
+            });
+          }
+        }, initialPrompt || '');
+        if (isMounted && s) {
+          setSummaryText(s);
+          setStatus('ready');
+        }
       }
     };
     init();
-    return () => {
+
+  return () => {
       isMounted = false;
     };
   }, [imageFile, startMode, initialStatusOverride]); 
@@ -338,6 +368,72 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           }
           return item;
       }));
+  };
+
+  const handleSmartAnswer = async (questionId: string, answer: string) => {
+    if (!sessionId) return;
+    
+    const newAnswers = { ...smartAnswers, [questionId]: answer };
+    setSmartAnswers(newAnswers);
+    
+    // Clear the question that was just answered from the list for UI feedback
+    setSmartQuestions(prev => prev.filter(q => q.id !== questionId));
+    
+    // If all questions in the current batch are answered, send to backend
+    // Actually, we can send them one by one or wait. Let's send them all if no more questions in current batch.
+    // However, the backend might return MORE questions.
+    
+    // For simplicity in UI, let's wait until all visible questions are answered
+    const remainingCount = smartQuestions.length - 1;
+    if (remainingCount === 0) {
+      setIsProcessing(true);
+      try {
+        const session = await answerSmartQuestion(sessionId, newAnswers);
+      setSmartSpec(session.spec);
+      if ((session as any).template_selected) {
+        setSmartTemplate((session as any).template_selected);
+      }
+      setSmartAnswers({}); // 清空已提交的答案，防止下次重复发送
+        
+        if (session.plan_items && session.plan_items.length > 0) {
+          setPlanItems(session.plan_items);
+        }
+
+        if (session.questions && session.questions.length > 0) {
+          setSmartQuestions(session.questions);
+        } else {
+          setSmartQuestions([]);
+        }
+      } catch (e) {
+        setErrorMessage('提交回答失败，请重试');
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  const handleSmartGenerate = async () => {
+    if (!sessionId) return;
+    
+    setErrorMessage(null);
+    setStatus('executing');
+    setIsProcessing(true);
+    
+    try {
+      const result = await generateSmartImage(sessionId);
+      if (result.urls && result.urls.length > 0) {
+        addToHistory(result.urls[0]);
+        setStatus('completed');
+      } else {
+        throw new Error('No URL returned');
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMessage('生成失败，请稍后重试');
+      setStatus('ready');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleUserSubmit = async () => {
@@ -730,6 +826,86 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
         </div>
 
         <div ref={rightPaneRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            {/* Smart Questions */}
+            {isSmartFlow && smartQuestions.length > 0 && (
+              <div className="mb-6 space-y-4">
+                {smartQuestions.map((q) => (
+                  <motion.div
+                    key={q.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="p-5 rounded-2xl bg-purple-600/10 border border-purple-500/30 shadow-lg"
+                  >
+                    <p className="text-sm font-bold text-purple-300 mb-3 flex items-center gap-2">
+                      <SparklesIcon className="w-4 h-4" />
+                      {q.text}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {q.choices ? (
+                        q.choices.map((choice) => (
+                          <button
+                            key={choice}
+                            onClick={() => handleSmartAnswer(q.id, choice)}
+                            disabled={isProcessing}
+                            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                          >
+                            {choice}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="flex w-full gap-2">
+                          <input
+                            type="text"
+                            placeholder="输入您的回答..."
+                            className="flex-1 bg-black/40 border border-purple-500/30 rounded-xl px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleSmartAnswer(q.id, (e.target as HTMLInputElement).value);
+                                (e.target as HTMLInputElement).value = '';
+                              }
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+
+            {/* Smart Plan (Spec) */}
+            {isSmartFlow && smartSpec && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 shadow-lg"
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <SparklesIcon className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider">AI 智能方案已就绪</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-400">选用模板</span>
+                      <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded">{getTemplateName(smartTemplate)}</span>
+                    </div>
+                  {smartSpec.params && Object.keys(smartSpec.params).length > 0 && (
+                    <div className="pt-2 border-t border-white/5">
+                      <p className="text-[10px] text-gray-500 uppercase mb-2">调整参数</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(smartSpec.params).map(([k, v]: [string, any]) => (
+                          <div key={k} className="bg-black/20 rounded-lg p-2 flex flex-col">
+                            <span className="text-[10px] text-gray-400 truncate">{k}</span>
+                            <span className="text-xs text-amber-200 font-medium">{String(v)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
             {/* Step List */}
             <div className="grid grid-cols-1 gap-4">
               <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }`}</style>
@@ -945,9 +1121,11 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
                     <PaintBrushIcon className="w-5 h-5" />
                   </button>
                   <button
-                    onClick={() => executeMagic()}
+                    onClick={() => isSmartFlow ? handleSmartGenerate() : executeMagic()}
                     disabled={
-                       status === 'analyzing' || status === 'executing' || (planItems.filter((i) => i.checked).length === 0 && !userInput)
+                       status === 'analyzing' || status === 'executing' || isProcessing ||
+                       (!isSmartFlow && planItems.filter((i) => i.checked).length === 0 && !userInput) ||
+                       (isSmartFlow && smartQuestions.length > 0)
                     }
                     className="px-5 py-3 bg-gradient-to-r from-amber-400 to-purple-600 text-white rounded-xl font-bold text-base shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed min-w-[140px]"
                   >

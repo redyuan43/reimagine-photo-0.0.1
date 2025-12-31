@@ -69,6 +69,59 @@ export const urlToBlob = async (url: string): Promise<Blob> => {
   return await res.blob();
 };
 
+// --- Smart Workflow Service ---
+export interface SmartQuestion {
+  id: string;
+  text: string;
+  choices?: string[];
+}
+
+export interface SmartSession {
+  session_id: string;
+  questions: SmartQuestion[];
+  spec: any;
+  status: string;
+  plan_items?: PlanItem[];
+}
+
+export const startSmartSession = async (file: File, userPrompt: string): Promise<SmartSession> => {
+  const fd = new FormData();
+  fd.append('image', file);
+  fd.append('message', userPrompt);
+  const res = await fetch(`${getApiBaseUrl()}/smart/start`, { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(await res.text());
+  return await res.json();
+};
+
+export const answerSmartQuestion = async (sessionId: string, answers: Record<string, string>): Promise<SmartSession> => {
+  const res = await fetch(`${getApiBaseUrl()}/smart/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, answers })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return await res.json();
+};
+
+export interface SmartGenerateResponse {
+  session_id: string;
+  status: string;
+  prompt: string;
+  image_model: string;
+  image_config: any;
+  urls: string[];
+}
+
+export const generateSmartImage = async (sessionId: string): Promise<SmartGenerateResponse> => {
+  const res = await fetch(`${getApiBaseUrl()}/smart/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return await res.json();
+};
+
 // --- Analysis Service (Streaming Mock) ---
 // Now accepts a callback to stream items one by one
 export const analyzeImage = async (

@@ -74,8 +74,8 @@ export const FloatingPhoto: React.FC<FloatingPhotoProps> = ({
           left: initialPos.x,
           top: initialPos.y,
           // Mouse Parallax (Framer Motion) handles interactive offset
-          x: parallax ? useTransform(parallax.x, (v) => v * parallax.factor) : 0,
-          y: parallax ? useTransform(parallax.y, (v) => v * parallax.factor) : 0,
+          x: parallax ? useTransform(parallax.x, (v) => Number(v) * parallax.factor) : 0,
+          y: parallax ? useTransform(parallax.y, (v) => Number(v) * parallax.factor) : 0,
           opacity: blur ? 0.6 : 0.9,
           filter: blur ? 'blur(2px)' : 'none',
           zIndex: blur ? 0 : 10,
