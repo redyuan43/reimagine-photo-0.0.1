@@ -456,9 +456,33 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
     };
 
     if (status === 'ready' || status === 'analyzing') {
-      // Add to plan, execute all together later
-      setPlanItems((prev) => [...prev, newStep]);
-      setUserInput('');
+      if (isSmartFlow && sessionId) {
+        setIsProcessing(true);
+        try {
+          const session = await answerSmartQuestion(sessionId, {}, userInput);
+          setSmartSpec(session.spec);
+          if ((session as any).template_selected) {
+            setSmartTemplate((session as any).template_selected);
+          }
+          if (session.plan_items && session.plan_items.length > 0) {
+            setPlanItems(session.plan_items);
+          }
+          if (session.questions && session.questions.length > 0) {
+            setSmartQuestions(session.questions);
+          } else {
+            setSmartQuestions([]);
+          }
+          setUserInput('');
+        } catch (e) {
+          setErrorMessage('同步指令失败，请重试');
+        } finally {
+          setIsProcessing(false);
+        }
+      } else {
+        // Add to plan, execute all together later
+        setPlanItems((prev) => [...prev, newStep]);
+        setUserInput('');
+      }
     } else if (status === 'completed') {
       // Iterative phase
       setPlanItems((prev) => [...prev, newStep]);
@@ -578,7 +602,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           };
           setPlanItems(prev => [...prev, maskStep]);
           
-          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '1K', 'image.png', summaryText);
+          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '1K', 'image.png', summaryText, undefined, undefined, currentMaskBlob);
           
           if (resultUrl) {
               addToHistory(resultUrl);

@@ -93,11 +93,11 @@ export const startSmartSession = async (file: File, userPrompt: string): Promise
   return await res.json();
 };
 
-export const answerSmartQuestion = async (sessionId: string, answers: Record<string, string>): Promise<SmartSession> => {
+export const answerSmartQuestion = async (sessionId: string, answers: Record<string, string>, message?: string): Promise<SmartSession> => {
   const res = await fetch(`${getApiBaseUrl()}/smart/answer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, answers })
+    body: JSON.stringify({ session_id: sessionId, answers, message })
   });
   if (!res.ok) throw new Error(await res.text());
   return await res.json();
@@ -192,7 +192,8 @@ export const editImage = async (
   filename: string = "image.png",
   analysisSummary?: string,
   aspectRatio?: string, // 新增：比例参数
-  stepIndex?: number    // 新增：步骤索引
+  stepIndex?: number,    // 新增：步骤索引
+  maskBlob?: Blob       // 新增：遮罩数据
 ): Promise<string | null> => {
   const sanitizeSummary = (txt?: string): string => {
     const s = (txt || '').trim();
@@ -221,6 +222,11 @@ export const editImage = async (
     const fd = new FormData();
     console.log('Uploading image blob size:', (imageBlob as any)?.size ?? 'unknown');
     fd.append('image', imageBlob, filename);
+
+    if (maskBlob) {
+      console.log('Uploading mask blob size:', (maskBlob as any)?.size ?? 'unknown');
+      fd.append('mask', maskBlob, 'mask.png');
+    }
 
     const typeWeight = (t?: string) => {
       const v = (t || '').toLowerCase();

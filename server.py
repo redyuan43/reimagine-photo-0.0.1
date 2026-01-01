@@ -1002,7 +1002,32 @@ def _spec_to_plan_items(spec: dict, facts: dict) -> List[dict]:
             "checked": True
         })
 
+    # 4. 滤镜建议 (从 facts 中获取，如果有的话)
+    fr = facts.get("filter_recommendations") or {}
+    primary = fr.get("primary_filter") or {}
+    alts = fr.get("alternative_filters") or []
+    options = []
+    if primary.get("name"):
+        options.append(primary.get("name"))
+    for a in alts:
+        if a.get("name"):
+            options.append(a.get("name"))
+    if options:
+        items.append({
+            "id": "filter_opt",
+            "problem": "",
+            "solution": primary.get("description") or "Apply Artistic Filter",
+            "engine": "Filter",
+            "category": "风格滤镜",
+            "type": "adjustment",
+            "checked": False,
+            "options": options,
+        })
+
     return items
+
+
+def _parse_ui_to_plan_items(ui: dict) -> List[dict]:
     items = []
     prof_analysis = ui.get("professional_analysis") or []
     
@@ -1327,6 +1352,8 @@ def _analyze_image_facts_best_effort(image_path: str, user_prompt: str = "") -> 
                 ui_facts = _extract_image_facts_from_ui(ui if isinstance(ui, dict) else None)
                 facts.update(ui_facts)
                 facts["analysis_summary"] = sanitize_summary_ui((ui or {}).get("summary_ui") if isinstance(ui, dict) else "")
+                if isinstance(ui, dict) and ui.get("filter_recommendations"):
+                    facts["filter_recommendations"] = ui.get("filter_recommendations")
     except Exception as exc:
         logger.info("smart_session analyze fallback: %s", exc)
     return facts
@@ -1624,6 +1651,7 @@ def _llm_clarify_next(spec: dict, facts: Optional[dict], messages: List[dict], t
     instruction = (
         "你是一个图片编辑意图澄清助手。你的目标是：\n"
         "1) 深入分析用户需求，更新 spec（意图规格）。\n"
+        "   - **特别注意**：如果用户提出了具体的编辑指令（如：去掉某物、换个颜色、移动位置），必须将其记录在 spec 的 edits.instruction 中。如果已有指令，请根据新需求进行追加或合并。\n"
         "2) 引导式对话：如果用户意图模糊，或者你可以通过询问获得更好的生成效果，请务必提出 1-2 个针对性的问题。\n"
         "   - **特别注意**：如果 conversation 为空（用户只点了分析没说话），你必须基于图片事实主动发起第一次对话，询问用户想要达到的效果，并给出 2-3 个基于图片的具体建议选项。\n"
         "3) 精准路由：从 templates_available 中选择最匹配的一个。即使当前信息不完全，只要图片内容明确（如风景、人像、产品），就应优先选择对应的专业模板，而不是 photo_retouch。\n\n"
@@ -1982,6 +2010,13 @@ async def smart_generate(req: SmartSessionGenerateRequest):
         spec = _deep_merge(spec, {"output": {"aspect_ratio": req.aspect_ratio.strip()}})
 
     prompt_text, image_config = _compile_prompt(spec, facts, selected)
+    
+    print("\n" + "="*50)
+    print("FINAL PROMPT SENT TO GEMINI:")
+    print(prompt_text)
+    print("="*50 + "\n")
+    logger.info("FINAL PROMPT SENT TO GEMINI: \n%s", prompt_text)
+
     image_model = os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview")
     try:
         with open(sess["image_path"], "rb") as f:
@@ -2047,6 +2082,7 @@ async def smart_generate(req: SmartSessionGenerateRequest):
 @app.post("/magic_edit")
 async def magic_edit(
     image: UploadFile = File(...),
+    mask: Optional[UploadFile] = File(None),
     prompt: str = Form(""),
     n: int = Form(1),
     size: str = Form(""),
@@ -2103,6 +2139,18 @@ async def magic_edit(
         process_bin, _ = _pil_to_bytes(img, input_fmt, quality=90 if input_fmt=='jpeg' else None)
         img_data = base64.b64encode(process_bin).decode("utf-8")
 
+        mask_data = None
+        if mask:
+            mask_bin = await mask.read()
+            if mask_bin:
+                try:
+                    mask_img = _load_image_from_bytes(mask_bin, "mask.png")
+                    mask_img = mask_img.resize(img.size) # 确保 Mask 与原图尺寸一致
+                    mask_proc, _ = _pil_to_bytes(mask_img, "png")
+                    mask_data = base64.b64encode(mask_proc).decode("utf-8")
+                except Exception as e:
+                    logger.warning("Failed to process mask: %s", e)
+
         urls = []
         local_paths = []
 
@@ -2115,19 +2163,36 @@ async def magic_edit(
             
             # 组合基础提示词和用户指令
             final_prompt = f"[Standard Quality Requirements]\n{GEMINI_BASE_PROMPT}\n\n[User Specific Edit Instruction]\n{prompt}"
+            if mask_data:
+                final_prompt += "\n\nNote: A mask image is provided. The second image is the mask where white areas indicate where the edits should be applied. Please perform inpainting/editing in the white areas of the mask while keeping other parts unchanged."
             
-            # 构造请求体 (严格遵循 SDK 示例的 contents 结构)
+            print("\n" + "="*50)
+            print("FINAL PROMPT SENT TO GEMINI (MAGIC_EDIT):")
+            print(final_prompt)
+            print("="*50 + "\n")
+            logger.info("FINAL PROMPT SENT TO GEMINI (MAGIC_EDIT): \n%s", final_prompt)
+
+            # 构造请求体
+            parts = [
+                {"text": final_prompt},
+                {
+                    "inline_data": {
+                        "mime_type": input_mime,
+                        "data": img_data
+                    }
+                }
+            ]
+            if mask_data:
+                parts.append({
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": mask_data
+                    }
+                })
+
             payload_json = {
                 "contents": [{
-                    "parts": [
-                        {"text": final_prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": input_mime,
-                                "data": img_data
-                            }
-                        }
-                    ]
+                    "parts": parts
                 }],
                 "generationConfig": {
                     "responseModalities": ["TEXT", "IMAGE"]
