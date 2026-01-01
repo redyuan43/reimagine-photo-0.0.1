@@ -7,12 +7,13 @@ import time
 import logging
 import io
 import sqlite3
+import secrets
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 from typing import List, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from starlette.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -75,13 +76,68 @@ except ImportError:
 
 # 简化：不使用 dashscope 直接调用本地/指定推理服务
 
+def _env_truthy(v: Optional[str]) -> bool:
+    return str(v or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_prod_env() -> bool:
+    env = (os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or "").strip().lower()
+    return env in {"prod", "production"}
+
+
+def _get_api_auth_token() -> Optional[str]:
+    token = os.getenv("API_AUTH_TOKEN") or os.getenv("SERVER_TOKEN") or ""
+    token = token.strip()
+    return token or None
+
+
+def _api_auth_enabled() -> bool:
+    if _env_truthy(os.getenv("API_AUTH_DISABLED")):
+        return False
+    if _env_truthy(os.getenv("API_AUTH_ENABLED")):
+        return True
+    if _is_prod_env():
+        return True
+    return bool(_get_api_auth_token())
+
+
+def require_api_auth(request: Request) -> None:
+    if request.method == "OPTIONS":
+        return
+    if not _api_auth_enabled():
+        return
+    expected = _get_api_auth_token()
+    if not expected:
+        raise HTTPException(status_code=500, detail="Server misconfigured")
+    auth = (request.headers.get("authorization") or "").strip()
+    token = ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+    if not token:
+        token = (request.headers.get("x-api-key") or "").strip()
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
+
+
+def _get_cors_allow_origins() -> list[str]:
+    raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
+    if raw:
+        items = [s.strip() for s in raw.split(",") if s.strip()]
+        if items:
+            return items
+    return ["http://localhost:3000", "http://127.0.0.1:3000", "http://0.0.0.0:3000"]
+
+
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
+_cors_kwargs = dict(
+    allow_origins=_get_cors_allow_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+_cors_origin_regex = (os.getenv("CORS_ALLOW_ORIGIN_REGEX") or "").strip()
+if _cors_origin_regex:
+    _cors_kwargs["allow_origin_regex"] = _cors_origin_regex
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)

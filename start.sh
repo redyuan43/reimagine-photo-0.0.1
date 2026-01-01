@@ -116,7 +116,7 @@ if command -v curl &> /dev/null; then
 fi
 
 echo -e "${YELLOW}[启动] 前端服务 (端口 3000)...${NC}"
-npm run dev &
+env VITE_API_BASE_URL="${VITE_API_BASE_URL:-/api}" npm run dev &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > .frontend.pid
 echo -e "${GREEN}[成功] 前端服务已启动 (PID: $FRONTEND_PID)${NC}"

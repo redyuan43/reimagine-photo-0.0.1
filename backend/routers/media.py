@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.responses import StreamingResponse
 
 import server as impl
@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/preview")
-async def preview(image: UploadFile = File(...)):
+async def preview(image: UploadFile = File(...), _auth: None = Depends(impl.require_api_auth)):
     payload = await image.read()
     if not payload:
         raise HTTPException(status_code=400, detail="No image payload")
@@ -26,6 +26,7 @@ async def preview(image: UploadFile = File(...)):
 
 @router.post("/convert")
 async def convert(
+    _auth: None = Depends(impl.require_api_auth),
     image: UploadFile = File(...),
     format: str = Form("jpeg"),
     quality: int = Form(90),
@@ -122,7 +123,7 @@ async def convert(
 
 
 @router.get("/proxy_image")
-def proxy_image(url: str):
+def proxy_image(url: str, _auth: None = Depends(impl.require_api_auth)):
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="invalid url")
     try:
@@ -130,7 +131,6 @@ def proxy_image(url: str):
         if r.status_code != 200:
             raise HTTPException(status_code=502, detail=f"fetch failed {r.status_code}")
         ct = r.headers.get("content-type") or "application/octet-stream"
-        return StreamingResponse(io.BytesIO(r.content), media_type=ct, headers={"Access-Control-Allow-Origin": "*"})
+        return StreamingResponse(io.BytesIO(r.content), media_type=ct)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
-

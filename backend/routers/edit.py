@@ -6,11 +6,11 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 import server as impl
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(impl.require_api_auth)])
 
 
 @router.post("/magic_edit")
@@ -302,4 +302,3 @@ async def magic_edit(
             os.unlink(tmp.name)
         except Exception:
             pass
-

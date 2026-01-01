@@ -3,11 +3,24 @@ import { AnalysisResponse, PlanItem } from "../types";
 
 // --- API Configuration ---
 // 使用当前主机名构建API地址，避免硬编码IP导致跨域
-const getApiBaseUrl = () => {
+export const getApiBaseUrl = () => {
+  const baseFromEnv = (import.meta as any)?.env?.VITE_API_BASE_URL as string | undefined;
+  if (typeof baseFromEnv === 'string') {
+    const v = baseFromEnv.trim();
+    if (v) return v.replace(/\/$/, '');
+  }
+  if ((import.meta as any)?.env?.DEV) return '/api';
   if (typeof window !== 'undefined') {
     return `http://${window.location.hostname}:8000`;
   }
   return 'http://localhost:8000';
+};
+
+export const getAuthHeaders = (): Record<string, string> => {
+  if (typeof window === 'undefined') return {};
+  const token = (window.localStorage?.getItem('LUMINA_API_TOKEN') || '').trim();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
 };
 
 // --- MOCK DATA ---
@@ -65,7 +78,7 @@ export const checkAndRequestApiKey = async (): Promise<boolean> => {
 export const urlToBlob = async (url: string): Promise<Blob> => {
   const isHttp = /^https?:\/\//i.test(url);
   const proxied = isHttp ? `${getApiBaseUrl()}/proxy_image?url=${encodeURIComponent(url)}` : url;
-  const res = await fetch(proxied);
+  const res = await fetch(proxied, { headers: getAuthHeaders() });
   return await res.blob();
 };
 
@@ -88,15 +101,16 @@ export const startSmartSession = async (file: File, userPrompt: string): Promise
   const fd = new FormData();
   fd.append('image', file);
   fd.append('message', userPrompt);
-  const res = await fetch(`${getApiBaseUrl()}/smart/start`, { method: 'POST', body: fd });
+  const res = await fetch(`${getApiBaseUrl()}/smart/start`, { method: 'POST', body: fd, headers: getAuthHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return await res.json();
 };
 
 export const answerSmartQuestion = async (sessionId: string, answers: Record<string, string>, message?: string): Promise<SmartSession> => {
+  const auth = getAuthHeaders();
   const res = await fetch(`${getApiBaseUrl()}/smart/answer`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify({ session_id: sessionId, answers, message })
   });
   if (!res.ok) throw new Error(await res.text());
@@ -113,9 +127,10 @@ export interface SmartGenerateResponse {
 }
 
 export const generateSmartImage = async (sessionId: string): Promise<SmartGenerateResponse> => {
+  const auth = getAuthHeaders();
   const res = await fetch(`${getApiBaseUrl()}/smart/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: JSON.stringify({ session_id: sessionId })
   });
   if (!res.ok) throw new Error(await res.text());
@@ -133,7 +148,7 @@ export const analyzeImage = async (
     const fd = new FormData();
     fd.append('image', file);
     fd.append('prompt', prompt);
-    const sse = await fetch(`${getApiBaseUrl()}/analyze_stream`, { method: 'POST', body: fd });
+    const sse = await fetch(`${getApiBaseUrl()}/analyze_stream`, { method: 'POST', body: fd, headers: getAuthHeaders() });
     if (sse.ok && sse.headers.get('content-type')?.includes('text/event-stream')) {
       const reader = sse.body!.getReader();
       const decoder = new TextDecoder();
@@ -160,7 +175,7 @@ export const analyzeImage = async (
       }
       return summary;
     }
-    const res = await fetch(`${getApiBaseUrl()}/analyze`, { method: 'POST', body: fd });
+    const res = await fetch(`${getApiBaseUrl()}/analyze`, { method: 'POST', body: fd, headers: getAuthHeaders() });
     if (res.ok) {
       const data = await res.json() as { analysis?: PlanItem[], summary?: string };
       const items = data.analysis || [];
@@ -295,10 +310,11 @@ export const editImage = async (
     
     // 新增：向后端传递分辨率、比例和步骤
     fd.append('resolution', resolution);
+
     if (aspectRatio) fd.append('aspect_ratio', aspectRatio);
     if (stepIndex !== undefined) fd.append('step', stepIndex.toString());
 
-    const res = await fetch(`${getApiBaseUrl()}/magic_edit`, { method: 'POST', body: fd });
+    const res = await fetch(`${getApiBaseUrl()}/magic_edit`, { method: 'POST', body: fd, headers: getAuthHeaders() });
     console.log('magic_edit response status:', res.status, res.ok);
     if (res.ok) {
       const data = await res.json() as { urls?: string[] };
@@ -323,7 +339,7 @@ export const editImage = async (
 export const getPreviewForUpload = async (file: File): Promise<string> => {
   const fd = new FormData();
   fd.append('image', file);
-  const res = await fetch(`${getApiBaseUrl()}/preview`, { method: 'POST', body: fd });
+  const res = await fetch(`${getApiBaseUrl()}/preview`, { method: 'POST', body: fd, headers: getAuthHeaders() });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(txt || `preview failed ${res.status}`);
@@ -362,7 +378,7 @@ export const convertImage = async (
   fd.append('format', format);
   if (typeof opts.quality === 'number') fd.append('quality', String(opts.quality));
   if (typeof opts.compression === 'number') fd.append('compression', String(opts.compression));
-  const res = await fetch(`${getApiBaseUrl()}/convert`, { method: 'POST', body: fd });
+  const res = await fetch(`${getApiBaseUrl()}/convert`, { method: 'POST', body: fd, headers: getAuthHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return await res.blob();
 };

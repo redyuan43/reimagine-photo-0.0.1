@@ -8,12 +8,12 @@ import os
 import tempfile
 import threading
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.responses import StreamingResponse
 
 import server as impl
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(impl.require_api_auth)])
 
 
 @router.post("/analyze")
@@ -252,4 +252,3 @@ async def analyze_stream(image: UploadFile = File(...), prompt: str = Form("")):
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
-

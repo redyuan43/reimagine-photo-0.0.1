@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 import server as impl
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(impl.require_api_auth)])
 
 
 @router.post("/smart/start", response_model=impl.SmartSessionStartResponse)
@@ -313,4 +313,3 @@ async def smart_generate(req: impl.SmartSessionGenerateRequest):
         urls=urls,
         record_id=record_id,
     )
-

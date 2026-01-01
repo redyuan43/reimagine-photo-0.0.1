@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 import server as impl
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(impl.require_api_auth)])
 
 
 @router.post("/records", response_model=impl.RecordModel)
 async def create_record(
+    _auth: None = Depends(impl.require_api_auth),
     image: UploadFile = File(...),
     prompt: str = Form(...),
     thinking: Optional[str] = Form(None),
@@ -49,7 +50,7 @@ def get_record(record_id: int):
 
 
 @router.get("/logs")
-def fetch_logs(lines: int = 200):
+def fetch_logs(lines: int = 200, _auth: None = Depends(impl.require_api_auth)):
     lines = max(1, min(lines, 2000))
     return {"lines": impl._read_log_tail(lines)}
 
@@ -57,6 +58,7 @@ def fetch_logs(lines: int = 200):
 @router.post("/records/{record_id}/images", response_model=impl.RecordImageModel)
 async def upload_record_image(
     record_id: int,
+    _auth: None = Depends(impl.require_api_auth),
     image: UploadFile = File(...),
     kind: str = Form("intermediate"),
 ):
@@ -69,4 +71,3 @@ async def upload_record_image(
     image_path = impl._save_image_bytes(image.filename or "image.png", payload)
     record_image = impl._insert_record_image(record_id=record_id, kind=kind, image_path=image_path)
     return record_image
-

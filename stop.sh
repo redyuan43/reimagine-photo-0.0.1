@@ -33,10 +33,10 @@ if [ ! -z "$BACKEND_PORT_PID" ]; then
     kill $BACKEND_PORT_PID 2>/dev/null && echo -e "${GREEN}[成功] 已停止占用端口 8000 的进程${NC}"
 fi
 
-# 停止占用 5173 端口的进程
-FRONTEND_PORT_PID=$(lsof -ti:5173 2>/dev/null)
+# 停止占用 3000 端口的进程
+FRONTEND_PORT_PID=$(lsof -ti:3000 2>/dev/null)
 if [ ! -z "$FRONTEND_PORT_PID" ]; then
-    kill $FRONTEND_PORT_PID 2>/dev/null && echo -e "${GREEN}[成功] 已停止占用端口 5173 的进程${NC}"
+    kill $FRONTEND_PORT_PID 2>/dev/null && echo -e "${GREEN}[成功] 已停止占用端口 3000 的进程${NC}"
 fi
 
 echo -e "${GREEN}所有服务已关闭${NC}"
