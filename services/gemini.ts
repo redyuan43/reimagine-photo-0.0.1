@@ -1,5 +1,5 @@
 
-import { AnalysisResponse, PlanItem } from "../types";
+import { PlanItem } from "../types";
 
 // --- API Configuration ---
 // 使用当前主机名构建API地址，避免硬编码IP导致跨域
@@ -154,6 +154,7 @@ export const analyzeImage = async (
       const decoder = new TextDecoder();
       let buffer = '';
       let summary: string | undefined = undefined;
+      let gotFinal = false;
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -168,6 +169,22 @@ export const analyzeImage = async (
             if (payload.type === 'item' && payload.item) {
               onPartialResult(payload.item as PlanItem);
             } else if (payload.type === 'final') {
+              summary = payload.summary as string | undefined;
+              gotFinal = true;
+            }
+          } catch {}
+        }
+        if (gotFinal) {
+          try { await reader.cancel(); } catch {}
+          return summary;
+        }
+      }
+      if (buffer.trim()) {
+        const line = buffer.trim();
+        if (line.startsWith('data:')) {
+          try {
+            const payload = JSON.parse(line.slice(5));
+            if (payload.type === 'final') {
               summary = payload.summary as string | undefined;
             }
           } catch {}

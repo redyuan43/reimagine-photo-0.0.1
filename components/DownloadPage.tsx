@@ -114,7 +114,7 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({ sourceUrl, onConfirm
       const out = await res.blob();
       const url = URL.createObjectURL(out);
       setDownloadUrl(url);
-      onConfirmDone && onConfirmDone();
+      if (onConfirmDone) onConfirmDone();
       try {
         const a = document.createElement('a');
         a.href = url;

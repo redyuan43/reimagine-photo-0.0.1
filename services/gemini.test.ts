@@ -21,15 +21,15 @@ describe('services/gemini', () => {
 
   it('urlToBlob sends auth headers when fetching', async () => {
     localStorage.setItem('LUMINA_API_TOKEN', 't');
-    const fetchMock = vi.fn(async () => new Response(new Blob(['x'])));
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => new Response(new Blob(['x'])),
+    );
     (globalThis as any).fetch = fetchMock;
 
     await urlToBlob('https://example.com/x.png');
 
     expect(fetchMock).toHaveBeenCalled();
-    const call = fetchMock.mock.calls[0];
-    const opts = call[1] as RequestInit;
-    expect((opts.headers as any).Authorization).toBe('Bearer t');
+    const opts = fetchMock.mock.calls[0]?.[1];
+    expect(((opts?.headers as any) || {}).Authorization).toBe('Bearer t');
   });
 });
-

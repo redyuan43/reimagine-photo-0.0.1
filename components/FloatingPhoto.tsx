@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { motion, useTransform, MotionValue } from 'framer-motion';
+import { motion, MotionValue, useMotionValue, useTransform } from 'framer-motion';
 
 export type FloatingVariant = 'vertical' | 'circular' | 'figure8';
 
@@ -58,6 +58,10 @@ export const FloatingPhoto: React.FC<FloatingPhotoProps> = ({
   const syncDelay = delay - timeSinceStart;
 
   const animName = `float-${variant}`;
+  const zero = useMotionValue(0);
+  const factor = parallax?.factor ?? 0;
+  const motionX = useTransform(parallax?.x ?? zero, (v) => Number(v) * factor);
+  const motionY = useTransform(parallax?.y ?? zero, (v) => Number(v) * factor);
 
   return (
     <>
@@ -74,8 +78,8 @@ export const FloatingPhoto: React.FC<FloatingPhotoProps> = ({
           left: initialPos.x,
           top: initialPos.y,
           // Mouse Parallax (Framer Motion) handles interactive offset
-          x: parallax ? useTransform(parallax.x, (v) => Number(v) * parallax.factor) : 0,
-          y: parallax ? useTransform(parallax.y, (v) => Number(v) * parallax.factor) : 0,
+          x: motionX,
+          y: motionY,
           opacity: blur ? 0.6 : 0.9,
           filter: blur ? 'blur(2px)' : 'none',
           zIndex: blur ? 0 : 10,

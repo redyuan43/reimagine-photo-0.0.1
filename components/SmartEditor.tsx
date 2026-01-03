@@ -227,8 +227,8 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
             });
           }
         }, initialPrompt || '');
-        if (isMounted && s) {
-          setSummaryText(s);
+        if (isMounted) {
+          setSummaryText(s || '');
           setStatus('ready');
         }
       }

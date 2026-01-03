@@ -488,7 +488,7 @@ export const CanvasMaskEditor: React.FC<CanvasMaskEditorProps> = ({
 
   const getPopupStyle = () => {
       if (!pendingAnnotation) return { display: 'none' };
-      let px = pendingAnnotation.x * scale + offset.x;
+      const px = pendingAnnotation.x * scale + offset.x;
       let py = pendingAnnotation.y * scale + offset.y;
 
       if (pendingAnnotation.type === 'comment' && pendingAnnotation.h) {
