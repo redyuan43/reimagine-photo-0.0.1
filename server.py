@@ -848,27 +848,6 @@ def _spec_to_plan_items(spec: dict, facts: dict) -> List[dict]:
             "checked": True
         })
         
-    # 2. 意图规格建议
-    style = (spec.get("style") or {}).get("preset")
-    if style:
-        items.append({
-            "id": "item_style",
-            "problem": f"用户偏好{style}风格",
-            "solution": f"迁移{style}风格权重与氛围渲染",
-            "category": "风格转换",
-            "checked": True
-        })
-        
-    edits = (spec.get("edits") or {}).get("instruction")
-    if edits:
-        items.append({
-            "id": "item_edit",
-            "problem": "用户特定编辑需求",
-            "solution": edits,
-            "category": "按需编辑",
-            "checked": True
-        })
-
     # 3. 模板特定的建议
     task_type = spec.get("task_type")
     if task_type == "text_design":
@@ -1368,9 +1347,9 @@ def _compile_prompt(spec: dict, facts: Optional[dict], template_selected: str) -
 
     keep_lines = []
     if must_keep.get("identity") is True:
-        keep_lines.append("Preserve the subject's identity and facial features exactly. Do not change face shape, eyes, nose, mouth, or skin structure.")
+        keep_lines.append("Preserve the subject's identity and facial features as much as possible. Do not change face shape, eyes, nose, mouth, or skin structure.")
     if must_keep.get("composition") is True:
-        keep_lines.append("Preserve the original composition, camera viewpoint, framing, and geometry.")
+        keep_lines.append("Preserve the original composition, camera viewpoint, framing, and geometry as much as possible.")
     if must_keep.get("text_content") is True:
         keep_lines.append("Do not alter existing text content unless explicitly instructed.")
     if keep_lines:

@@ -93,8 +93,8 @@ async def magic_edit(
             native_url = f"{base_url.rstrip('/')}/models/{model}:generateContent?key={vision_api_key}"
 
             final_prompt = f"[Standard Quality Requirements]\n{impl.GEMINI_BASE_PROMPT}\n\n[User Specific Edit Instruction]\n{prompt}"
-            # if mask_data:
-            #     final_prompt += "\n\nNote: A mask image is provided. The second image is the mask where white areas indicate where the edits should be applied. Please perform inpainting/editing in the red areas of the mask while keeping other parts unchanged."
+            if mask_data:
+                final_prompt += "\n\nA mask image is provided as the second image. White areas are the ONLY regions to modify. Black areas must remain unchanged. Keep everything else identical."
 
             print("\n" + "=" * 50)
             print("FINAL PROMPT SENT TO GEMINI (MAGIC_EDIT):")
