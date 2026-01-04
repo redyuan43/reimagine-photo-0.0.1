@@ -1345,15 +1345,16 @@ def _compile_prompt(spec: dict, facts: Optional[dict], template_selected: str) -
     else:
         lines.append("[Task]\nFaithful photo restoration and enhancement.")
 
-    keep_lines = []
-    if must_keep.get("identity") is True:
-        keep_lines.append("Preserve the subject's identity and facial features as much as possible. Do not change face shape, eyes, nose, mouth, or skin structure.")
-    if must_keep.get("composition") is True:
-        keep_lines.append("Preserve the original composition, camera viewpoint, framing, and geometry as much as possible.")
-    if must_keep.get("text_content") is True:
-        keep_lines.append("Do not alter existing text content unless explicitly instructed.")
-    if keep_lines:
-        lines.append("[Must Keep]\n" + "\n".join(keep_lines))
+    lines.append(
+        "[Standard Quality Requirements]\n"
+        "Restore this image to stunning quality, ultra-high detail, and exceptional clarity. "
+        "Apply advanced restoration techniques to eliminate noise, artifacts, and any imperfections. "
+        "Optimize lighting to appear natural, balanced, and dynamic, enhancing depth and textures without overexposed highlights or excessively dark shadows. "
+        "Colors should be meticulously restored to achieve a vibrant, rich, and harmonious aesthetic, characteristic of leading design magazines. "
+        "Even if the original is black and white or severely faded, intelligently recolor and enhance it to meet this benchmark standard, "
+        "with deep blacks, clean whites, and rich, realistic tones. "
+        "The final image should appear as though captured with a high-end camera and professionally post-processed, possessing maximum depth and realism."
+    )
 
     delta_lines = []
     user_instruction = edits.get("instruction")

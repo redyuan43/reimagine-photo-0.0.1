@@ -97,7 +97,7 @@ BACKEND_PID=$!
 echo $BACKEND_PID > .backend.pid
 echo -e "${GREEN}[成功] 后台服务已启动 (PID: $BACKEND_PID)${NC}"
 
-sleep 1
+sleep 5
 kill -0 $BACKEND_PID 2>/dev/null
 if [ $? -ne 0 ]; then
     echo -e "${RED}[错误] 后台服务启动失败，请检查上方报错${NC}"
