@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 切换到脚本所在目录
+cd "$(dirname "$0")"
+
 # LUMINA AI 一键启动脚本 (Linux/macOS)
 # 同时启动前端和后台服务
 

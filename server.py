@@ -125,7 +125,7 @@ def _get_cors_allow_origins() -> list[str]:
         items = [s.strip() for s in raw.split(",") if s.strip()]
         if items:
             return items
-    return ["http://localhost:3000", "http://127.0.0.1:3000", "http://0.0.0.0:3000"]
+    return ["*"] # Allow all origins by default for better compatibility
 
 
 app = FastAPI()
@@ -218,6 +218,7 @@ class SmartSessionStartResponse(BaseModel):
     prompt_preview: Optional[str] = None
     image_model: Optional[str] = None
     plan_items: Optional[List[dict]] = None
+    summary: Optional[str] = None
 
 
 class SmartSessionAnswerResponse(BaseModel):
@@ -231,6 +232,7 @@ class SmartSessionAnswerResponse(BaseModel):
     prompt_preview: Optional[str] = None
     image_model: Optional[str] = None
     plan_items: Optional[List[dict]] = None
+    summary: Optional[str] = None
 
 
 class SmartSessionGenerateResponse(BaseModel):
@@ -821,6 +823,30 @@ def _spec_to_plan_items(spec: dict, facts: dict) -> List[dict]:
             "category": "细节修复",
             "checked": True
         })
+    if quality.get("composition_issue"):
+        items.append({
+            "id": "item_comp",
+            "problem": quality["composition_issue"],
+            "solution": "优化构图布局与视觉重心引导",
+            "category": "构图优化",
+            "checked": True
+        })
+    if quality.get("background_issue"):
+        items.append({
+            "id": "item_bg",
+            "problem": quality["background_issue"],
+            "solution": "简化背景干扰并增强空间层次感",
+            "category": "背景处理",
+            "checked": True
+        })
+    if quality.get("local_defects") and quality["local_defects"] != "无明显瑕疵或噪点":
+        items.append({
+            "id": "item_defect",
+            "problem": quality["local_defects"],
+            "solution": "执行局部瑕疵修复与降噪处理",
+            "category": "修复细节",
+            "checked": True
+        })
         
     # 2. 意图规格建议
     style = (spec.get("style") or {}).get("preset")
@@ -875,7 +901,7 @@ def _spec_to_plan_items(spec: dict, facts: dict) -> List[dict]:
     if options:
         items.append({
             "id": "filter_opt",
-            "problem": "",
+            "problem": "探索艺术滤镜风格",
             "solution": primary.get("description") or "Apply Artistic Filter",
             "engine": "Filter",
             "category": "风格滤镜",
@@ -935,7 +961,7 @@ def _parse_ui_to_plan_items(ui: dict) -> List[dict]:
     if options:
         items.append({
             "id": "filter_opt",
-            "problem": "",
+            "problem": "探索艺术滤镜风格",
             "solution": primary.get("description") or "Apply Artistic Filter",
             "engine": "Filter",
             "category": "风格滤镜",
@@ -1587,8 +1613,8 @@ def _gemini_image_edit_native(model: str, prompt_text: str, image_bytes: bytes, 
                     ext = ".jpg"
                 out_path = _save_image_bytes(f"smart{ext}", out_bytes)
                 local_paths.append(out_path)
-                base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
-                urls.append(f"{base}/static/{Path(out_path).name}")
+                # Always use relative paths for static files to work with Vite proxy
+                urls.append(f"/static/{Path(out_path).name}")
     except Exception as exc:
         logger.warning("smart_generate parse response failed: %s", exc)
     if not urls:
@@ -1770,8 +1796,8 @@ async def magic_edit(
                                 local_paths.append(out_path)
                                 
                                 # 转换为可以直接访问的 URL
-                                base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
-                                urls.append(f"{base}/static/{Path(out_path).name}")
+                                # Always use relative paths for static files to work with Vite proxy
+                                urls.append(f"/static/{Path(out_path).name}")
                                 logger.info("成功提取并保存生成图像: %s", out_path)
                             elif "file_data" in part or "fileData" in part:
                                 logger.info("Gemini 返回了 file_data: %s", part.get("file_data") or part.get("fileData"))
@@ -1889,8 +1915,8 @@ async def magic_edit(
             try:
                 served_urls: list[str] = []
                 if local_paths:
-                    base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
-                    served_urls = [f"{base}/static/{Path(p).name}" for p in local_paths]
+                    # Always use relative paths for static files to work with Vite proxy
+                    served_urls = [f"/static/{Path(p).name}" for p in local_paths]
                 else:
                     served_urls = urls
                 return {"urls": served_urls}

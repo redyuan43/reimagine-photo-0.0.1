@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -128,6 +129,7 @@ async def smart_start(image: UploadFile = File(...), message: str = Form("")):
         prompt_preview=prompt_preview,
         image_model=os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview"),
         plan_items=impl._spec_to_plan_items(spec, facts),
+        summary=facts.get("analysis_summary") if isinstance(facts, dict) else None,
     )
 
 
@@ -223,6 +225,7 @@ async def smart_answer(req: impl.SmartSessionAnswerRequest):
         prompt_preview=prompt_preview,
         image_model=os.getenv("IMAGE_EDIT_MODEL", "gemini-3-pro-image-preview"),
         plan_items=impl._spec_to_plan_items(spec, facts),
+        summary=facts.get("analysis_summary") if isinstance(facts, dict) else None,
     )
 
 
@@ -277,10 +280,24 @@ async def smart_generate(req: impl.SmartSessionGenerateRequest):
         except Exception:
             pass
 
+    # Convert relative URLs to absolute URLs for cross-device access
+    served_urls: list[str] = []
+    if local_paths:
+        base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
+        served_urls = [f"{base}/static/{Path(p).name}" for p in local_paths]
+    else:
+        # If URLs are already absolute, use them as-is; otherwise prepend base URL
+        base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
+        for url in urls:
+            if url.startswith("http://") or url.startswith("https://"):
+                served_urls.append(url)
+            else:
+                served_urls.append(f"{base}{url}")
+
     log_path = impl._write_json_log(
         "smart_generate",
         sess["image_path"],
-        urls,
+        served_urls,
         params={
             "session_id": sess["id"],
             "template_selected": selected,
@@ -292,7 +309,7 @@ async def smart_generate(req: impl.SmartSessionGenerateRequest):
         },
         steps=[],
         summary="",
-        events=[{"level": "INFO", "message": "smart_generate completed", "value": {"outputs": len(urls)}}],
+        events=[{"level": "INFO", "message": "smart_generate completed", "value": {"outputs": len(served_urls)}}],
         local_output_paths=local_paths,
         record_id=record_id,
     )
@@ -310,6 +327,6 @@ async def smart_generate(req: impl.SmartSessionGenerateRequest):
         prompt=prompt_text,
         image_model=image_model,
         image_config=image_config,
-        urls=urls,
+        urls=served_urls,
         record_id=record_id,
     )

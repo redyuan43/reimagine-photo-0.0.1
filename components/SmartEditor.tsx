@@ -209,6 +209,10 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
             setPlanItems(session.plan_items);
           }
           
+          if (session.summary) {
+            setSummaryText(session.summary);
+          }
+          
           if (session.questions && session.questions.length > 0) {
             setSmartQuestions(session.questions);
             setStatus('ready');
@@ -397,6 +401,10 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
         
         if (session.plan_items && session.plan_items.length > 0) {
           setPlanItems(session.plan_items);
+        }
+
+        if (session.summary) {
+          setSummaryText(session.summary);
         }
 
         if (session.questions && session.questions.length > 0) {

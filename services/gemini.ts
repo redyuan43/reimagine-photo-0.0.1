@@ -95,6 +95,7 @@ export interface SmartSession {
   spec: any;
   status: string;
   plan_items?: PlanItem[];
+  summary?: string;
 }
 
 export const startSmartSession = async (file: File, userPrompt: string): Promise<SmartSession> => {
