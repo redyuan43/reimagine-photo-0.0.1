@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 import server as impl
 
@@ -26,6 +26,7 @@ async def magic_edit(
     aspect_ratio: Optional[str] = Form(None),
     resolution: Optional[str] = Form(None),
     step: Optional[int] = Form(None),
+    request: Request = None,  # 新增：获取请求Host
 ):
     vision_api_key = os.getenv("VISION_API_KEY")
     image_edit_endpoint = os.getenv("IMAGE_EDIT_ENDPOINT")
@@ -160,7 +161,14 @@ async def magic_edit(
                                 out_path = impl._save_image_bytes(out_filename, out_bytes)
                                 local_paths.append(out_path)
 
-                                base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
+                                # 根据请求Host构造URL（支持局域网访问）
+                                if request:
+                                    host = request.headers.get('host', 'localhost:8000')
+                                    if ':' not in host:
+                                        host = f'{host}:8000'
+                                    base = f"http://{host}".rstrip("/")
+                                else:
+                                    base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
                                 urls.append(f"{base}/static/{Path(out_path).name}")
                                 impl.logger.info("成功提取并保存生成图像: %s", out_path)
                             elif "file_data" in part or "fileData" in part:
@@ -287,7 +295,14 @@ async def magic_edit(
             try:
                 served_urls: list[str] = []
                 if local_paths:
-                    base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
+                    # 根据请求Host构造URL（支持局域网访问）
+                    if request:
+                        host = request.headers.get('host', 'localhost:8000')
+                        if ':' not in host:
+                            host = f'{host}:8000'
+                        base = f"http://{host}".rstrip("/")
+                    else:
+                        base = os.getenv("SERVER_BASE_URL", "http://localhost:8000").rstrip("/")
                     served_urls = [f"{base}/static/{Path(p).name}" for p in local_paths]
                 else:
                     served_urls = urls
