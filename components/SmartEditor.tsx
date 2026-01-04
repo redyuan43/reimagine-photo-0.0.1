@@ -21,7 +21,7 @@ import {
 import { ImageComparator } from './ImageComparator';
 import { CanvasMaskEditor } from './CanvasMaskEditor';
 import { DNALoader, BlinkingSmileIcon } from './DNALoader';
-import { analyzeImage, editImage, urlToBlob, startSmartSession, answerSmartQuestion, generateSmartImage, SmartQuestion, SmartSession } from '../services/gemini';
+import { analyzeImage, editImage, urlToBlob, startSmartSession, startSmartSessionStream, answerSmartQuestion, generateSmartImage, SmartQuestion, SmartSession } from '../services/gemini';
 import { PlanItem } from '../types';
 
 const MagicWandIcon = SparklesIcon;
@@ -195,8 +195,23 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
       try {
         if (isMounted) setStatus('analyzing');
         
-        // Use Smart Session for initial analysis
-        const session = await startSmartSession(imageFile, initialPrompt || '');
+        // Use Smart Session with SSE for initial analysis
+        const streamResult = await startSmartSessionStream(
+          imageFile,
+          initialPrompt || '',
+          (newItem) => {
+            if (isMounted) {
+              setPlanItems(prev => {
+                if (prev.find(p => p.id === newItem.id)) return prev;
+                return [...prev, newItem];
+              });
+            }
+          },
+          (summary) => {
+            if (isMounted) setSummaryText(summary || '');
+          }
+        );
+        const session = streamResult.session;
         if (isMounted) {
           setSessionId(session.session_id);
           setIsSmartFlow(true);
@@ -206,7 +221,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           }
           
           if (session.plan_items && session.plan_items.length > 0) {
-            setPlanItems(session.plan_items);
+            setPlanItems(prev => (prev.length ? prev : session.plan_items || []));
           }
           
           if (session.summary) {
@@ -222,18 +237,40 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
         }
       } catch (e) {
         console.warn('Smart flow failed, falling back to old analysis.', e);
-        // Fallback to old streaming analysis
-        const s = await analyzeImage(imageFile, (newItem) => {
+        try {
+          const session = await startSmartSession(imageFile, initialPrompt || '');
           if (isMounted) {
-            setPlanItems(prev => {
-              if (prev.find(p => p.id === newItem.id)) return prev;
-              return [...prev, newItem];
-            });
+            setSessionId(session.session_id);
+            setIsSmartFlow(true);
+            setSmartSpec(session.spec);
+            if ((session as any).template_selected) {
+              setSmartTemplate((session as any).template_selected);
+            }
+            if (session.plan_items && session.plan_items.length > 0) {
+              setPlanItems(session.plan_items);
+            }
+            if (session.questions && session.questions.length > 0) {
+              setSmartQuestions(session.questions);
+              setStatus('ready');
+            } else {
+              setStatus('ready');
+            }
           }
-        }, initialPrompt || '');
-        if (isMounted) {
-          setSummaryText(s || '');
-          setStatus('ready');
+        } catch (e2) {
+          console.warn('Smart start failed, falling back to old analysis.', e2);
+          // Fallback to old streaming analysis
+          const s = await analyzeImage(imageFile, (newItem) => {
+            if (isMounted) {
+              setPlanItems(prev => {
+                if (prev.find(p => p.id === newItem.id)) return prev;
+                return [...prev, newItem];
+              });
+            }
+          }, initialPrompt || '');
+          if (isMounted) {
+            setSummaryText(s || '');
+            setStatus('ready');
+          }
         }
       }
     };
@@ -551,7 +588,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
 
     try {
         console.log('[executeMagic] Starting, sourceBlob:', sourceBlob, 'activeSteps:', activeSteps.length);
-        const resultUrl = await editImage(sourceBlob, activeSteps, instruction, '1K', sendName, summaryText);
+        const resultUrl = await editImage(sourceBlob, activeSteps, instruction, '2K', sendName, summaryText);
         console.log('[executeMagic] editImage returned URL:', resultUrl);
         
         clearInterval(progressInterval);
@@ -610,7 +647,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           };
           setPlanItems(prev => [...prev, maskStep]);
           
-          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '1K', 'image.png', summaryText, undefined, undefined, currentMaskBlob);
+          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '2K', 'image.png', summaryText, undefined, undefined, currentMaskBlob);
           
           if (resultUrl) {
               addToHistory(resultUrl);

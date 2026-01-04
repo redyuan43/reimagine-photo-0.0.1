@@ -98,6 +98,11 @@ export interface SmartSession {
   summary?: string;
 }
 
+export interface SmartSessionStreamResult {
+  session: SmartSession;
+  summary?: string;
+}
+
 export const startSmartSession = async (file: File, userPrompt: string): Promise<SmartSession> => {
   const fd = new FormData();
   fd.append('image', file);
@@ -105,6 +110,55 @@ export const startSmartSession = async (file: File, userPrompt: string): Promise
   const res = await fetch(`${getApiBaseUrl()}/smart/start`, { method: 'POST', body: fd, headers: getAuthHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return await res.json();
+};
+
+export const startSmartSessionStream = async (
+  file: File,
+  userPrompt: string,
+  onPartialResult: (item: PlanItem) => void,
+  onSummary?: (summary?: string) => void
+): Promise<SmartSessionStreamResult> => {
+  const fd = new FormData();
+  fd.append('image', file);
+  fd.append('message', userPrompt);
+  const sse = await fetch(`${getApiBaseUrl()}/smart/start_stream`, { method: 'POST', body: fd, headers: getAuthHeaders() });
+  if (!sse.ok) throw new Error(await sse.text());
+  if (!sse.headers.get('content-type')?.includes('text/event-stream')) {
+    throw new Error('smart/start_stream is not SSE');
+  }
+  const reader = sse.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let summary: string | undefined = undefined;
+  let session: SmartSession | null = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop() || '';
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith('data:')) continue;
+      try {
+        const payload = JSON.parse(line.slice(5));
+        if (payload.type === 'item' && payload.item) {
+          onPartialResult(payload.item as PlanItem);
+        } else if (payload.type === 'final') {
+          summary = payload.summary as string | undefined;
+          if (onSummary) onSummary(summary);
+        } else if (payload.type === 'session' && payload.session) {
+          session = payload.session as SmartSession;
+        }
+      } catch {}
+    }
+    if (session) {
+      try { await reader.cancel(); } catch {}
+      return { session, summary };
+    }
+  }
+  if (!session) throw new Error('smart/start_stream ended without session');
+  return { session, summary };
 };
 
 export const answerSmartQuestion = async (sessionId: string, answers: Record<string, string>, message?: string): Promise<SmartSession> => {
@@ -221,7 +275,7 @@ export const editImage = async (
   imageBlob: Blob,
   activeSteps: PlanItem[],
   userInstruction: string,
-  resolution: '1K' | '2K' | '4K' = '1K',
+  resolution: '1K' | '2K' | '4K' = '2K',
   filename: string = "image.png",
   analysisSummary?: string,
   aspectRatio?: string, // 新增：比例参数

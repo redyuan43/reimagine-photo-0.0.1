@@ -1044,7 +1044,7 @@ def analyze_image_with_qwen3_vl_plus(image_path: str, user_prompt: str = "", ver
     url = base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     body = {
-        "model": "qwen3-vl-plus",
+        "model": "qwen3-vl-flash",
         "messages": messages,
         "temperature": 0.1,
         "top_p": 0.1,
