@@ -588,7 +588,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
 
     try {
         console.log('[executeMagic] Starting, sourceBlob:', sourceBlob, 'activeSteps:', activeSteps.length);
-        const resultUrl = await editImage(sourceBlob, activeSteps, instruction, '2K', sendName, summaryText);
+        const resultUrl = await editImage(sourceBlob, activeSteps, instruction, '1K', sendName, summaryText);
         console.log('[executeMagic] editImage returned URL:', resultUrl);
         
         clearInterval(progressInterval);
@@ -647,7 +647,7 @@ export const SmartEditor: React.FC<SmartEditorProps> = ({
           };
           setPlanItems(prev => [...prev, maskStep]);
           
-          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '2K', 'image.png', summaryText, undefined, undefined, currentMaskBlob);
+          const resultUrl = await editImage(baseImageBlob, activeSteps, prompt, '1K', 'image.png', summaryText, undefined, undefined, currentMaskBlob);
           
           if (resultUrl) {
               addToHistory(resultUrl);

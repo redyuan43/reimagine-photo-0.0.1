@@ -275,7 +275,7 @@ export const editImage = async (
   imageBlob: Blob,
   activeSteps: PlanItem[],
   userInstruction: string,
-  resolution: '1K' | '2K' | '4K' = '2K',
+  resolution: '1K' | '2K' | '4K' = '1K',
   filename: string = "image.png",
   analysisSummary?: string,
   aspectRatio?: string, // 新增：比例参数
