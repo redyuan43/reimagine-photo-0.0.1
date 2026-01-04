@@ -18,6 +18,12 @@ echo -e "${CYAN}  LUMINA AI - 启动中...${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 
+# 启动前先尝试停止已有服务
+if [ -f "./stop.sh" ]; then
+    echo -e "${YELLOW}[预处理] 执行 stop.sh 清理旧进程...${NC}"
+    bash "./stop.sh"
+fi
+
 # 检查 Node.js
 echo -e "${YELLOW}[检查] Node.js...${NC}"
 if ! command -v node &> /dev/null; then
